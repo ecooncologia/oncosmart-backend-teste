@@ -140,8 +140,8 @@ app.get('/custos_oracle', async (req, res) => {
 
         connection = await oracledb.getConnection(dbConfigOracle);
         
-        // 💡 Adicionamos DT_ATENDIMENTO e CD_CARTEIRINHA para o cruzamento no Javascript
-        let querySql = `SELECT CD_TUSS, VL_CUSTO_UNITARIO_MANIP, CUSTO_ANTIGO, CD_AUTORIZACAO, DT_ATENDIMENTO, CD_CARTEIRINHA FROM TASY.CUSTOS_MEDICAMENTOS_ECO`;
+        // 💡 Adicionada a coluna correta: CD_USUARIO_CONVENIO
+        let querySql = `SELECT CD_TUSS, VL_CUSTO_UNITARIO_MANIP, CUSTO_ANTIGO, CD_AUTORIZACAO, DT_ATENDIMENTO, CD_USUARIO_CONVENIO FROM TASY.CUSTOS_MEDICAMENTOS_ECO`;
         let bindParams = {};
 
         if (nrAtendimento) {
