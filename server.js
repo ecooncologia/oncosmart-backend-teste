@@ -154,6 +154,10 @@ app.get('/custos_oracle', async (req, res) => {
         }
         
         const result = await connection.execute(querySql, bindParams);
+        
+        // 💡 LOG DA QUANTIDADE DE REGISTROS INSERIDO AQUI:
+        console.log(`✅ [Oracle] Consulta concluída. Foram puxados ${result.rows.length} registros da View.`);
+        
         res.json(result.rows);
         
     } catch (err) {
