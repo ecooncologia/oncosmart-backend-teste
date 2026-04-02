@@ -1,0 +1,25 @@
+# Senhas e Variáveis de Ambiente
+.env
+google-credentials.json
+
+# Certificados de Segurança SSL
+*.pem
+
+# Dependências
+node_modules/
+
+# Sessões e Cache do WhatsApp
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Arquivos Temporários, Logs e DBs
+downloads_unimed/
+*.log
+*.sql
+*.tgz
+cloudflared-linux-amd64
+
+# Plugins e Imagens de Erro do Robô
+plugin.zip
+plugin_anticaptcha/
+*.png
