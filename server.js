@@ -140,7 +140,7 @@ app.get('/custos_oracle', async (req, res) => {
 
         connection = await oracledb.getConnection(dbConfigOracle);
         
-        let querySql = `SELECT CD_TUSS, VL_CUSTO_UNITARIO_MANIP, CUSTO_ANTIGO, CD_AUTORIZACAO FROM TASY.CUSTOS_MEDICAMENTOS_ECO`;
+        let querySql = `SELECT CD_TUSS, VL_CUSTO_UNITARIO_MANIP, CUSTO_ANTIGO, CD_AUTORIZACAO, DT_ATENDIMENTO, NR_CARTEIRINHA FROM TASY.CUSTOS_MEDICAMENTOS_ECO`;
         let bindParams = {};
 
         if (nrAtendimento) {
