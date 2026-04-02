@@ -125,14 +125,13 @@ const safeIsoDate = (dateVal) => {
 };
 
 // ============================================================================
-// 🚀 ORACLE: BUSCANDO APENAS TUSS SOLICITADOS (COM FILTRO SUPER OTIMIZADO)
+// 🚀 ORACLE: ROTA DE LEITURA OTIMIZADA PARA O DE-PARA DO FRONT-END
 // ============================================================================
-app.post('/custos_oracle', async (req, res) => {
+app.get('/custos_oracle', async (req, res) => {
     let connection;
     try {
-        const nrAtendimento = req.body.atendimento;
-        const mesAno = req.body.mesAno; 
-        const tussList = req.body.tussList || []; // 💡 Lista de TUSS enviada pelo Front-End
+        const nrAtendimento = req.query.atendimento;
+        const mesAno = req.query.mesAno; 
         
         if (!nrAtendimento && !mesAno) {
             console.log("🛑 [Oracle] BLOQUEADO: Tentativa de buscar a view inteira evitada. Mês ou atendimento ausente.");
@@ -141,7 +140,7 @@ app.post('/custos_oracle', async (req, res) => {
 
         connection = await oracledb.getConnection(dbConfigOracle);
         
-        // 💡 ADD CD_CARTEIRINHA E DT_ATENDIMENTO
+        // 💡 Adicionamos DT_ATENDIMENTO e CD_CARTEIRINHA para o cruzamento no Javascript
         let querySql = `SELECT CD_TUSS, VL_CUSTO_UNITARIO_MANIP, CUSTO_ANTIGO, CD_AUTORIZACAO, DT_ATENDIMENTO, CD_CARTEIRINHA FROM TASY.CUSTOS_MEDICAMENTOS_ECO`;
         let bindParams = {};
 
@@ -150,24 +149,15 @@ app.post('/custos_oracle', async (req, res) => {
             bindParams = { atendimento: nrAtendimento };
         } 
         else if (mesAno) {
+            // Mantemos a janela de 6 meses porque a Unimed costuma enviar faturamentos atrasados
             querySql += ` WHERE TRUNC(DT_ATENDIMENTO, 'MM') >= ADD_MONTHS(TO_DATE(:mesAno, 'MM/YYYY'), -6) 
                             AND TRUNC(DT_ATENDIMENTO, 'MM') <= TO_DATE(:mesAno, 'MM/YYYY')`;
             bindParams = { mesAno: mesAno };
-
-            // 💡 FILTRANDO DIRETO NO BANCO PELOS TUSS USADOS NO MÊS (Máximo 999 itens por limite do Oracle)
-            if (tussList && tussList.length > 0) {
-                const safeTussList = tussList.slice(0, 999);
-                const inClause = safeTussList.map((_, i) => `:tuss${i}`).join(',');
-                querySql += ` AND CD_TUSS IN (${inClause})`;
-                
-                safeTussList.forEach((t, i) => {
-                    bindParams[`tuss${i}`] = String(t);
-                });
-            }
         }
         
         const result = await connection.execute(querySql, bindParams);
-        console.log(`✅ [Oracle] Consulta concluída. Foram puxados ${result.rows.length} registros (Filtrados por ${tussList.length} TUSS únicos).`);
+        
+        console.log(`✅ [Oracle] Consulta concluída. Foram puxados ${result.rows.length} registros da View para o De-Para.`);
         
         res.json(result.rows);
         
@@ -665,7 +655,7 @@ async function handleSave(req, res, next) {
             if (!isNaN(id)) {
                 await pool.query(`UPDATE repasse_unimed SET custo_correto = IF(? IS NOT NULL, ?, custo_correto), custo_errado = IF(? IS NOT NULL, ?, custo_errado), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?) WHERE id = ?`, [dados.custo_correto !== undefined ? dados.custo_correto : null, dados.custo_correto !== undefined ? dados.custo_correto : null, dados.custo_errado !== undefined ? dados.custo_errado : null, dados.custo_errado !== undefined ? dados.custo_errado : null, JSON.stringify(dados), id]);
             } else {
-                await pool.query(`INSERT INTO repasse_unimed (${idField}, competencia, paciente, data_atendimento, descricao, tipo, quantidade, valor_pago, custo_correto, custo_errado, is_med_item, dados_extras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE competencia=VALUES(competencia), paciente=VALUES(data_atendimento), descricao=VALUES(descricao), tipo=VALUES(tipo), quantidade=VALUES(quantidade), valor_pago=VALUES(valor_pago), custo_correto=IF(VALUES(custo_correto) IS NOT NULL, VALUES(custo_correto), custo_correto), custo_errado=IF(VALUES(custo_errado) IS NOT NULL, VALUES(custo_errado), custo_errado), is_med_item=VALUES(is_med_item), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?)`, [dbId, dados.competencia || '', dados.paciente || '', dados.data_atendimento || '', dados.descricao || '', dados.tipo || 'MED', dados.quantidade || 1, dados.valor_pago || 0, dados.custo_correto !== undefined ? dados.custo_correto : null, dados.custo_errado !== undefined ? dados.custo_errado : null, dados.is_med_item ? 1 : 0, JSON.stringify(dados), JSON.stringify(dados)]);
+                await pool.query(`INSERT INTO repasse_unimed (${idField}, competencia, paciente, data_atendimento, descricao, tipo, quantidade, valor_pago, custo_correto, custo_errado, is_med_item, dados_extras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE competencia=VALUES(competencia), paciente=VALUES(paciente), data_atendimento=VALUES(data_atendimento), descricao=VALUES(descricao), tipo=VALUES(tipo), quantidade=VALUES(quantidade), valor_pago=VALUES(valor_pago), custo_correto=IF(VALUES(custo_correto) IS NOT NULL, VALUES(custo_correto), custo_correto), custo_errado=IF(VALUES(custo_errado) IS NOT NULL, VALUES(custo_errado), custo_errado), is_med_item=VALUES(is_med_item), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?)`, [dbId, dados.competencia || '', dados.paciente || '', dados.data_atendimento || '', dados.descricao || '', dados.tipo || 'MED', dados.quantidade || 1, dados.valor_pago || 0, dados.custo_correto !== undefined ? dados.custo_correto : null, dados.custo_errado !== undefined ? dados.custo_errado : null, dados.is_med_item ? 1 : 0, JSON.stringify(dados), JSON.stringify(dados)]);
             }
         }
         else {
