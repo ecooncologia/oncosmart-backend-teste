@@ -219,32 +219,28 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
         connection = await oracledb.getConnection(dbConfigOracle);
         console.log("[1/4] Conectado ao Oracle com sucesso.");
         
+        // 💡 CORREÇÃO: Buscando DIRETO DA VIEW tasy.protocolos_eco em vez das tabelas base!
         const oracleSql = `
-            SELECT A.CD_ESTABELECIMENTO,
-                   A.NR_SEQUENCIA SEQ_PROTOCOLO, 
-                   A.CD_PROTOCOLO,
-                   B.NR_SEQUENCIA NR_SEQ_SUBTIPO,
-                   A.NM_PROTOCOLO,
-                   B.NM_MEDICACAO NM_SUBTIPO,
-                   B.NR_CICLOS,
-                   B.NR_DIAS_INTERVALO,
-                   A.NM_USUARIO
-            FROM TASY.PROTOCOLO A
-            INNER JOIN TASY.PROTOCOLO_MEDICACAO B ON A.CD_PROTOCOLO = B.CD_PROTOCOLO
-                                             AND B.IE_SITUACAO = 'A'
-            WHERE A.IE_SITUACAO = 'A'
+            SELECT 
+                CD_ESTABELECIMENTO,
+                SEQ_PROTOCOLO, 
+                CD_PROTOCOLO,
+                NR_SEQ_SUBTIPO,
+                NM_PROTOCOLO,
+                NM_SUBTIPO,
+                NR_CICLOS,
+                NR_DIAS_INTERVALO,
+                NM_USUARIO
+            FROM TASY.PROTOCOLOS_ECO
         `;
         
-        console.log("[2/4] Executando Query no Oracle...");
+        console.log("[2/4] Executando Query na View TASY.PROTOCOLOS_ECO...");
         const resultOracle = await connection.execute(oracleSql);
-        console.log(`[2/4] Query finalizada. O Oracle retornou ${resultOracle.rows ? resultOracle.rows.length : 0} linhas.`);
+        console.log(`[2/4] Query finalizada. Retornou ${resultOracle.rows ? resultOracle.rows.length : 0} linhas.`);
 
         let inserted = 0;
         if (resultOracle.rows && resultOracle.rows.length > 0) {
-            console.log("[3/4] Exemplo da primeira linha retornada do Oracle:");
-            console.log(JSON.stringify(resultOracle.rows[0], null, 2));
-            
-            console.log("[4/4] Inserindo dados no MySQL...");
+            console.log("[3/4] Inserindo dados no MySQL...");
             for (let i = 0; i < resultOracle.rows.length; i++) {
                 let row = resultOracle.rows[i];
                 try {
@@ -268,17 +264,17 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
                     );
                     inserted++;
                 } catch(mysqlErr) {
-                    console.error(`❌ [MySQL] Falha ao inserir linha ${i}. Dados:`, row);
+                    console.error(`❌ [MySQL] Falha ao inserir linha. Dados:`, row);
                     console.error(`Detalhe do erro MySQL:`, mysqlErr.message);
                     throw mysqlErr; 
                 }
             }
-            console.log(`[4/4] Inserção no MySQL concluída! Processados: ${inserted}.`);
+            console.log(`[4/4] Inserção concluída! Processados: ${inserted}.`);
         }
-        res.json({ success: true, total: resultOracle.rows.length, inserted });
+        res.json({ success: true, total: resultOracle.rows ? resultOracle.rows.length : 0, inserted });
     } catch (err) {
         console.error("❌ ERRO FATAL NA SINCRONIZAÇÃO TASY:", err.message);
-        res.status(500).json({ error: err.message, stack: err.stack });
+        res.status(500).json({ error: err.message });
     } finally {
         if (connection) {
             try { await connection.close(); } catch (e) { console.error(e); }
