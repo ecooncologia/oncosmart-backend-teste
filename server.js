@@ -156,7 +156,6 @@ app.get('/custos_oracle', async (req, res) => {
         const result = await connection.execute(querySql, bindParams);
         
         console.log(`✅ [Oracle] Consulta concluída. Foram puxados ${result.rows.length} registros da View.`);
-        
         res.json(result.rows);
         
     } catch (err) {
@@ -170,7 +169,7 @@ app.get('/custos_oracle', async (req, res) => {
 });
 
 // ============================================================================
-// 🧬 MÓDULO DE PROTOCOLOS E TAGS (ESPECÍFICO - ANTES DO CATCH-ALL)
+// 🧬 MÓDULO DE PROTOCOLOS E TAGS (COM LOGS DETALHADOS PARA DEBUG)
 // ============================================================================
 
 app.post('/protocolos/init-tables', async (req, res) => {
@@ -183,8 +182,8 @@ app.post('/protocolos/init-tables', async (req, res) => {
             nr_seq_subtipo VARCHAR(50) UNIQUE,
             nm_protocolo VARCHAR(255),
             nm_subtipo VARCHAR(255),
-            nr_ciclos INT,
-            nr_dias_intervalo INT,
+            nr_ciclos VARCHAR(50), 
+            nr_dias_intervalo VARCHAR(50),
             nm_usuario VARCHAR(100),
             atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )`,
@@ -203,20 +202,22 @@ app.post('/protocolos/init-tables', async (req, res) => {
     ];
 
     try {
-        for (let sql of queries) {
-            await pool.query(sql);
-        }
+        for (let sql of queries) await pool.query(sql);
+        console.log("[PROTOCOLOS] Tabelas checadas/criadas com sucesso no MySQL.");
         res.json({ success: true });
     } catch (err) {
-        console.error("Erro ao criar tabelas de protocolos:", err);
+        console.error("❌ [PROTOCOLOS] Erro ao criar tabelas:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
 app.get('/protocolos/sync-tasy', async (req, res) => {
+    console.log("=== INICIANDO SINCRONIZAÇÃO DE PROTOCOLOS (TASY) ===");
     let connection;
     try {
+        console.log("[1/4] Conectando ao banco Oracle...");
         connection = await oracledb.getConnection(dbConfigOracle);
+        console.log("[1/4] Conectado ao Oracle com sucesso.");
         
         const oracleSql = `
             SELECT A.CD_ESTABELECIMENTO,
@@ -234,40 +235,55 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
             WHERE A.IE_SITUACAO = 'A'
         `;
         
+        console.log("[2/4] Executando Query no Oracle...");
         const resultOracle = await connection.execute(oracleSql);
+        console.log(`[2/4] Query finalizada. O Oracle retornou ${resultOracle.rows ? resultOracle.rows.length : 0} linhas.`);
 
         let inserted = 0;
         if (resultOracle.rows && resultOracle.rows.length > 0) {
-            for (let row of resultOracle.rows) {
-                await pool.query(
-                    `INSERT INTO protocolos 
-                    (cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON DUPLICATE KEY UPDATE 
-                    cd_estabelecimento=VALUES(cd_estabelecimento), seq_protocolo=VALUES(seq_protocolo), cd_protocolo=VALUES(cd_protocolo), nm_protocolo=VALUES(nm_protocolo), nm_subtipo=VALUES(nm_subtipo), nr_ciclos=VALUES(nr_ciclos), nr_dias_intervalo=VALUES(nr_dias_intervalo), nm_usuario=VALUES(nm_usuario)`,
-                    [
-                        row.CD_ESTABELECIMENTO, 
-                        row.SEQ_PROTOCOLO, 
-                        row.CD_PROTOCOLO, 
-                        row.NR_SEQ_SUBTIPO, 
-                        row.NM_PROTOCOLO, 
-                        row.NM_SUBTIPO, 
-                        row.NR_CICLOS, 
-                        row.NR_DIAS_INTERVALO, 
-                        row.NM_USUARIO
-                    ]
-                );
-                inserted++;
+            console.log("[3/4] Exemplo da primeira linha retornada do Oracle:");
+            console.log(JSON.stringify(resultOracle.rows[0], null, 2));
+            
+            console.log("[4/4] Inserindo dados no MySQL...");
+            for (let i = 0; i < resultOracle.rows.length; i++) {
+                let row = resultOracle.rows[i];
+                try {
+                    await pool.query(
+                        `INSERT INTO protocolos 
+                        (cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON DUPLICATE KEY UPDATE 
+                        cd_estabelecimento=VALUES(cd_estabelecimento), seq_protocolo=VALUES(seq_protocolo), cd_protocolo=VALUES(cd_protocolo), nm_protocolo=VALUES(nm_protocolo), nm_subtipo=VALUES(nm_subtipo), nr_ciclos=VALUES(nr_ciclos), nr_dias_intervalo=VALUES(nr_dias_intervalo), nm_usuario=VALUES(nm_usuario)`,
+                        [
+                            row.CD_ESTABELECIMENTO, 
+                            row.SEQ_PROTOCOLO, 
+                            row.CD_PROTOCOLO, 
+                            row.NR_SEQ_SUBTIPO, 
+                            row.NM_PROTOCOLO, 
+                            row.NM_SUBTIPO, 
+                            row.NR_CICLOS, 
+                            row.NR_DIAS_INTERVALO, 
+                            row.NM_USUARIO
+                        ]
+                    );
+                    inserted++;
+                } catch(mysqlErr) {
+                    console.error(`❌ [MySQL] Falha ao inserir linha ${i}. Dados:`, row);
+                    console.error(`Detalhe do erro MySQL:`, mysqlErr.message);
+                    throw mysqlErr; 
+                }
             }
+            console.log(`[4/4] Inserção no MySQL concluída! Processados: ${inserted}.`);
         }
         res.json({ success: true, total: resultOracle.rows.length, inserted });
     } catch (err) {
-        console.error("Erro na sincronização Tasy:", err);
-        res.status(500).json({ error: err.message });
+        console.error("❌ ERRO FATAL NA SINCRONIZAÇÃO TASY:", err.message);
+        res.status(500).json({ error: err.message, stack: err.stack });
     } finally {
         if (connection) {
             try { await connection.close(); } catch (e) { console.error(e); }
         }
+        console.log("=== FIM DA TENTATIVA DE SINCRONIZAÇÃO ===");
     }
 });
 
@@ -290,6 +306,8 @@ app.get('/protocolos', async (req, res) => {
                 try { r.tags = JSON.parse(r.tags); } catch(e) { r.tags = []; }
             }
             if (!r.tags) r.tags = [];
+            r.nr_sequencia = r.seq_protocolo; 
+            r.cd_protocolo = r.nm_subtipo ? `${r.nm_protocolo} - ${r.nm_subtipo}` : r.nm_protocolo;
             return r;
         });
 
