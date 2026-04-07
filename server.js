@@ -125,7 +125,7 @@ const safeIsoDate = (dateVal) => {
 };
 
 // ============================================================================
-// 🚀 ORACLE: ROTA DE LEITURA OTIMIZADA PARA O DE-PARA DO FRONT-END
+// 🚀 ORACLE: BUSCANDO APENAS AS COLUNAS SOLICITADAS (Com Limite de 6 Meses)
 // ============================================================================
 app.get('/custos_oracle', async (req, res) => {
     let connection;
@@ -140,8 +140,7 @@ app.get('/custos_oracle', async (req, res) => {
 
         connection = await oracledb.getConnection(dbConfigOracle);
         
-        // 💡 Adicionada a coluna correta: CD_USUARIO_CONVENIO
-        let querySql = `SELECT CD_TUSS, VL_CUSTO_UNITARIO_MANIP, CUSTO_ANTIGO, CD_AUTORIZACAO, DT_ATENDIMENTO, CD_USUARIO_CONVENIO FROM TASY.CUSTOS_MEDICAMENTOS_ECO`;
+        let querySql = `SELECT CD_TUSS, VL_CUSTO_UNITARIO_MANIP, CUSTO_ANTIGO, CD_AUTORIZACAO FROM TASY.CUSTOS_MEDICAMENTOS_ECO`;
         let bindParams = {};
 
         if (nrAtendimento) {
@@ -149,7 +148,6 @@ app.get('/custos_oracle', async (req, res) => {
             bindParams = { atendimento: nrAtendimento };
         } 
         else if (mesAno) {
-            // Mantemos a janela de 6 meses porque a Unimed costuma enviar faturamentos atrasados
             querySql += ` WHERE TRUNC(DT_ATENDIMENTO, 'MM') >= ADD_MONTHS(TO_DATE(:mesAno, 'MM/YYYY'), -6) 
                             AND TRUNC(DT_ATENDIMENTO, 'MM') <= TO_DATE(:mesAno, 'MM/YYYY')`;
             bindParams = { mesAno: mesAno };
@@ -157,8 +155,7 @@ app.get('/custos_oracle', async (req, res) => {
         
         const result = await connection.execute(querySql, bindParams);
         
-        console.log(`✅ [Oracle] Consulta concluída. Foram puxados ${result.rows.length} registros da View para o De-Para.`);
-        
+        console.log(`✅ [Oracle] Consulta concluída. Foram puxados ${result.rows.length} registros da View.`);
         res.json(result.rows);
         
     } catch (err) {
@@ -169,6 +166,175 @@ app.get('/custos_oracle', async (req, res) => {
             try { await connection.close(); } catch (e) { console.error(e); }
         }
     }
+});
+
+// ============================================================================
+// 🧬 MÓDULO DE PROTOCOLOS E TAGS
+// ============================================================================
+
+app.post('/protocolos/init-tables', async (req, res) => {
+    const queries = [
+        `CREATE TABLE IF NOT EXISTS protocolos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            cd_estabelecimento VARCHAR(50),
+            seq_protocolo VARCHAR(50),
+            cd_protocolo VARCHAR(255),
+            nr_seq_subtipo VARCHAR(50) UNIQUE,
+            nm_protocolo VARCHAR(255),
+            nm_subtipo VARCHAR(255),
+            nr_ciclos INT,
+            nr_dias_intervalo INT,
+            nm_usuario VARCHAR(100),
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )`,
+        `CREATE TABLE IF NOT EXISTS protocolo_tags (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(100) NOT NULL,
+            cor VARCHAR(20) DEFAULT '#00855B'
+        )`,
+        `CREATE TABLE IF NOT EXISTS protocolo_vinculos (
+            id_protocolo INT,
+            id_tag INT,
+            PRIMARY KEY (id_protocolo, id_tag),
+            FOREIGN KEY (id_protocolo) REFERENCES protocolos(id) ON DELETE CASCADE,
+            FOREIGN KEY (id_tag) REFERENCES protocolo_tags(id) ON DELETE CASCADE
+        )`
+    ];
+
+    try {
+        for (let sql of queries) await pool.query(sql);
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Erro ao criar tabelas de protocolos:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/protocolos/sync-tasy', async (req, res) => {
+    let connection;
+    try {
+        connection = await oracledb.getConnection(dbConfigOracle);
+        
+        const oracleSql = `
+            SELECT A.CD_ESTABELECIMENTO,
+                   A.NR_SEQUENCIA SEQ_PROTOCOLO, 
+                   A.CD_PROTOCOLO,
+                   B.NR_SEQUENCIA NR_SEQ_SUBTIPO,
+                   A.NM_PROTOCOLO,
+                   B.NM_MEDICACAO NM_SUBTIPO,
+                   B.NR_CICLOS,
+                   B.NR_DIAS_INTERVALO,
+                   A.NM_USUARIO
+            FROM PROTOCOLO A
+            INNER JOIN PROTOCOLO_MEDICACAO B ON A.CD_PROTOCOLO = B.CD_PROTOCOLO
+                                             AND B.IE_SITUACAO = 'A'
+            WHERE A.IE_SITUACAO = 'A'
+        `;
+        
+        const resultOracle = await connection.execute(oracleSql);
+
+        let inserted = 0;
+        if (resultOracle.rows && resultOracle.rows.length > 0) {
+            for (let row of resultOracle.rows) {
+                await pool.query(
+                    `INSERT INTO protocolos 
+                    (cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE 
+                    cd_estabelecimento=VALUES(cd_estabelecimento), seq_protocolo=VALUES(seq_protocolo), cd_protocolo=VALUES(cd_protocolo), nm_protocolo=VALUES(nm_protocolo), nm_subtipo=VALUES(nm_subtipo), nr_ciclos=VALUES(nr_ciclos), nr_dias_intervalo=VALUES(nr_dias_intervalo), nm_usuario=VALUES(nm_usuario)`,
+                    [
+                        row.CD_ESTABELECIMENTO, 
+                        row.SEQ_PROTOCOLO, 
+                        row.CD_PROTOCOLO, 
+                        row.NR_SEQ_SUBTIPO, 
+                        row.NM_PROTOCOLO, 
+                        row.NM_SUBTIPO, 
+                        row.NR_CICLOS, 
+                        row.NR_DIAS_INTERVALO, 
+                        row.NM_USUARIO
+                    ]
+                );
+                inserted++;
+            }
+        }
+        res.json({ success: true, total: resultOracle.rows.length, inserted });
+    } catch (err) {
+        console.error("Erro na sincronização Tasy:", err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        if (connection) {
+            try { await connection.close(); } catch (e) { console.error(e); }
+        }
+    }
+});
+
+app.get('/protocolos', async (req, res) => {
+    try {
+        const sql = `
+            SELECT 
+                p.*,
+                (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', t.id, 'nome', t.nome, 'cor', t.cor))
+                 FROM protocolo_vinculos pv
+                 JOIN protocolo_tags t ON pv.id_tag = t.id
+                 WHERE pv.id_protocolo = p.id) as tags
+            FROM protocolos p
+            ORDER BY p.nm_protocolo ASC, p.nm_subtipo ASC
+        `;
+        const [rows] = await pool.query(sql);
+        
+        const data = rows.map(r => {
+            if (typeof r.tags === 'string') {
+                try { r.tags = JSON.parse(r.tags); } catch(e) { r.tags = []; }
+            }
+            if (!r.tags) r.tags = [];
+            // Compatibilidade direta com seu front-end
+            r.nr_sequencia = r.seq_protocolo; 
+            r.cd_protocolo = r.nm_subtipo ? `${r.nm_protocolo} - ${r.nm_subtipo}` : r.nm_protocolo;
+            return r;
+        });
+
+        res.json(data);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/protocolo-tags', async (req, res) => {
+    try {
+        const [rows] = await pool.query("SELECT * FROM protocolo_tags ORDER BY nome ASC");
+        res.json(Array.isArray(rows) ? rows : []);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/protocolo-tags', async (req, res) => {
+    const { nome, cor } = req.body;
+    try {
+        await pool.query("INSERT INTO protocolo_tags (nome, cor) VALUES (?, ?)", [nome, cor]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/protocolo-tags/:id', async (req, res) => {
+    try {
+        await pool.query("DELETE FROM protocolo_tags WHERE id = ?", [req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/protocolos/:id/tags', async (req, res) => {
+    const { tag_id } = req.body;
+    try {
+        await pool.query("INSERT IGNORE INTO protocolo_vinculos (id_protocolo, id_tag) VALUES (?, ?)", [req.params.id, tag_id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/protocolos/:protocolId/tags/:tagId', async (req, res) => {
+    try {
+        await pool.query("DELETE FROM protocolo_vinculos WHERE id_protocolo = ? AND id_tag = ?", [req.params.protocolId, req.params.tagId]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ============================================================================
