@@ -156,6 +156,7 @@ app.get('/custos_oracle', async (req, res) => {
         const result = await connection.execute(querySql, bindParams);
         
         console.log(`✅ [Oracle] Consulta concluída. Foram puxados ${result.rows.length} registros da View.`);
+        
         res.json(result.rows);
         
     } catch (err) {
@@ -169,7 +170,7 @@ app.get('/custos_oracle', async (req, res) => {
 });
 
 // ============================================================================
-// 🧬 MÓDULO DE PROTOCOLOS E TAGS
+// 🧬 MÓDULO DE PROTOCOLOS E TAGS (ESPECÍFICO - ANTES DO CATCH-ALL)
 // ============================================================================
 
 app.post('/protocolos/init-tables', async (req, res) => {
@@ -202,7 +203,9 @@ app.post('/protocolos/init-tables', async (req, res) => {
     ];
 
     try {
-        for (let sql of queries) await pool.query(sql);
+        for (let sql of queries) {
+            await pool.query(sql);
+        }
         res.json({ success: true });
     } catch (err) {
         console.error("Erro ao criar tabelas de protocolos:", err);
@@ -225,8 +228,8 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
                    B.NR_CICLOS,
                    B.NR_DIAS_INTERVALO,
                    A.NM_USUARIO
-            FROM PROTOCOLO A
-            INNER JOIN PROTOCOLO_MEDICACAO B ON A.CD_PROTOCOLO = B.CD_PROTOCOLO
+            FROM TASY.PROTOCOLO A
+            INNER JOIN TASY.PROTOCOLO_MEDICACAO B ON A.CD_PROTOCOLO = B.CD_PROTOCOLO
                                              AND B.IE_SITUACAO = 'A'
             WHERE A.IE_SITUACAO = 'A'
         `;
@@ -287,9 +290,6 @@ app.get('/protocolos', async (req, res) => {
                 try { r.tags = JSON.parse(r.tags); } catch(e) { r.tags = []; }
             }
             if (!r.tags) r.tags = [];
-            // Compatibilidade direta com seu front-end
-            r.nr_sequencia = r.seq_protocolo; 
-            r.cd_protocolo = r.nm_subtipo ? `${r.nm_protocolo} - ${r.nm_subtipo}` : r.nm_protocolo;
             return r;
         });
 
@@ -715,7 +715,7 @@ async function handleSave(req, res, next) {
             await pool.query(`INSERT INTO usuarios (id_firebase, nome, email, foto, permissoes, last_login, dados_extras) VALUES (?, ?, ?, ?, ?, NOW(), ?) ON DUPLICATE KEY UPDATE permissoes = VALUES(permissoes), nome = VALUES(nome), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?)`, [finalId, dados.nome, dados.email, dados.foto||'', JSON.stringify(permsObj), JSON.stringify(dados), JSON.stringify(dados)]);
         }
         else if (tabela === 'patientCalls') {
-            await pool.query(`INSERT INTO patientCalls (id_firebase, patientId, patientName, origin, status, timestamp, transportStartTime, transportEndTime, dados_extras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status=VALUES(status), transportStartTime=VALUES(transportStartTime), transportEndTime=VALUES(transportEndTime), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?)`, [finalId, dados.patientId || null, dados.patientName || dados.name, dados.origin || null, dados.status, limparData(dados.timestamp), limparData(dados.transportStartTime), limparData(dados.transportEndTime), JSON.stringify(dados), JSON.stringify(dados)]);
+            await pool.query(`INSERT INTO patientCalls (id_firebase, patientId, patientName, origin, status, timestamp, transportStartTime, transportEndTime, dados_extras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status=VALUES(status), transportStartTime=VALUES(transportStartTime), transportEndTime=VALUES(transportEndTime), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?)`, [finalId, dados.patientId || null, dados.patientName || dados.name, dados.origin || null, status, limparData(dados.timestamp), limparData(dados.transportStartTime), limparData(dados.transportEndTime), JSON.stringify(dados), JSON.stringify(dados)]);
         }
         else if (tabela === 'painAssessments') {
             const valPain = dados.painLevel || dados.pain_level || dados.nivel_dor || null;
