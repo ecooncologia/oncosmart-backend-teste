@@ -169,7 +169,7 @@ app.get('/custos_oracle', async (req, res) => {
 });
 
 // ============================================================================
-// 🧬 MÓDULO DE PROTOCOLOS E TAGS
+// 🧬 MÓDULO DE PROTOCOLOS E TAGS (COM LOGS DETALHADOS PARA DEBUG)
 // ============================================================================
 
 app.post('/protocolos/init-tables', async (req, res) => {
@@ -203,18 +203,23 @@ app.post('/protocolos/init-tables', async (req, res) => {
 
     try {
         for (let sql of queries) await pool.query(sql);
+        console.log("[PROTOCOLOS] Tabelas checadas/criadas com sucesso no MySQL.");
         res.json({ success: true });
     } catch (err) {
-        console.error("Erro ao criar tabelas de protocolos:", err);
+        console.error("❌ [PROTOCOLOS] Erro ao criar tabelas:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
 app.get('/protocolos/sync-tasy', async (req, res) => {
+    console.log("=== INICIANDO SINCRONIZAÇÃO DE PROTOCOLOS (TASY) ===");
     let connection;
     try {
+        console.log("[1/4] Conectando ao banco Oracle...");
         connection = await oracledb.getConnection(dbConfigOracle);
+        console.log("[1/4] Conectado ao Oracle com sucesso.");
         
+        // 💡 CORREÇÃO: Buscando DIRETO DA VIEW tasy.protocolos_eco em vez das tabelas base!
         const oracleSql = `
             SELECT 
                 CD_ESTABELECIMENTO,
@@ -229,40 +234,52 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
             FROM TASY.PROTOCOLOS_ECO
         `;
         
+        console.log("[2/4] Executando Query na View TASY.PROTOCOLOS_ECO...");
         const resultOracle = await connection.execute(oracleSql);
+        console.log(`[2/4] Query finalizada. Retornou ${resultOracle.rows ? resultOracle.rows.length : 0} linhas.`);
 
         let inserted = 0;
         if (resultOracle.rows && resultOracle.rows.length > 0) {
-            for (let row of resultOracle.rows) {
-                await pool.query(
-                    `INSERT INTO protocolos 
-                    (cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON DUPLICATE KEY UPDATE 
-                    cd_estabelecimento=VALUES(cd_estabelecimento), seq_protocolo=VALUES(seq_protocolo), cd_protocolo=VALUES(cd_protocolo), nm_protocolo=VALUES(nm_protocolo), nm_subtipo=VALUES(nm_subtipo), nr_ciclos=VALUES(nr_ciclos), nr_dias_intervalo=VALUES(nr_dias_intervalo), nm_usuario=VALUES(nm_usuario)`,
-                    [
-                        row.CD_ESTABELECIMENTO, 
-                        row.SEQ_PROTOCOLO, 
-                        row.CD_PROTOCOLO, 
-                        row.NR_SEQ_SUBTIPO, 
-                        row.NM_PROTOCOLO, 
-                        row.NM_SUBTIPO, 
-                        row.NR_CICLOS, 
-                        row.NR_DIAS_INTERVALO, 
-                        row.NM_USUARIO
-                    ]
-                );
-                inserted++;
+            console.log("[3/4] Inserindo dados no MySQL...");
+            for (let i = 0; i < resultOracle.rows.length; i++) {
+                let row = resultOracle.rows[i];
+                try {
+                    await pool.query(
+                        `INSERT INTO protocolos 
+                        (cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON DUPLICATE KEY UPDATE 
+                        cd_estabelecimento=VALUES(cd_estabelecimento), seq_protocolo=VALUES(seq_protocolo), cd_protocolo=VALUES(cd_protocolo), nm_protocolo=VALUES(nm_protocolo), nm_subtipo=VALUES(nm_subtipo), nr_ciclos=VALUES(nr_ciclos), nr_dias_intervalo=VALUES(nr_dias_intervalo), nm_usuario=VALUES(nm_usuario)`,
+                        [
+                            row.CD_ESTABELECIMENTO, 
+                            row.SEQ_PROTOCOLO, 
+                            row.CD_PROTOCOLO, 
+                            row.NR_SEQ_SUBTIPO, 
+                            row.NM_PROTOCOLO, 
+                            row.NM_SUBTIPO, 
+                            row.NR_CICLOS, 
+                            row.NR_DIAS_INTERVALO, 
+                            row.NM_USUARIO
+                        ]
+                    );
+                    inserted++;
+                } catch(mysqlErr) {
+                    console.error(`❌ [MySQL] Falha ao inserir linha. Dados:`, row);
+                    console.error(`Detalhe do erro MySQL:`, mysqlErr.message);
+                    throw mysqlErr; 
+                }
             }
+            console.log(`[4/4] Inserção concluída! Processados: ${inserted}.`);
         }
-        res.json({ success: true, total: resultOracle.rows.length, inserted });
+        res.json({ success: true, total: resultOracle.rows ? resultOracle.rows.length : 0, inserted });
     } catch (err) {
-        console.error("Erro na sincronização Tasy:", err);
+        console.error("❌ ERRO FATAL NA SINCRONIZAÇÃO TASY:", err.message);
         res.status(500).json({ error: err.message });
     } finally {
         if (connection) {
             try { await connection.close(); } catch (e) { console.error(e); }
         }
+        console.log("=== FIM DA TENTATIVA DE SINCRONIZAÇÃO ===");
     }
 });
 
@@ -711,9 +728,11 @@ async function handleSave(req, res, next) {
             if (typeof permsObj === 'string') { try { permsObj = JSON.parse(permsObj); } catch(e) {} }
             await pool.query(`INSERT INTO usuarios (id_firebase, nome, email, foto, permissoes, last_login, dados_extras) VALUES (?, ?, ?, ?, ?, NOW(), ?) ON DUPLICATE KEY UPDATE permissoes = VALUES(permissoes), nome = VALUES(nome), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?)`, [finalId, dados.nome, dados.email, dados.foto||'', JSON.stringify(permsObj), JSON.stringify(dados), JSON.stringify(dados)]);
         }
-        // 💡 CORREÇÃO: Variável 'status' corrigida para 'dados.status' na query do patientCalls
         else if (tabela === 'patientCalls') {
-            await pool.query(`INSERT INTO patientCalls (id_firebase, patientId, patientName, origin, status, timestamp, transportStartTime, transportEndTime, dados_extras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status=VALUES(status), transportStartTime=VALUES(transportStartTime), transportEndTime=VALUES(transportEndTime), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?)`, [finalId, dados.patientId || null, dados.patientName || dados.name, dados.origin || null, dados.status, limparData(dados.timestamp), limparData(dados.transportStartTime), limparData(dados.transportEndTime), JSON.stringify(dados), JSON.stringify(dados)]);
+            await pool.query(`INSERT INTO patientCalls (id_firebase, patientId, patientName, origin, status, timestamp, transportStartTime, transportEndTime, dados_extras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status=VALUES(status), transportStartTime=VALUES(transportStartTime), transportEndTime=VALUES(transportEndTime), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?)`,
+            [finalId, dados.patientId || null, dados.patientName || dados.name, dados.origin || null,
+            dados.status || 'waiting',   // ← CORRIGIDO
+            limparData(dados.timestamp), limparData(dados.transportStartTime), limparData(dados.transportEndTime), JSON.stringify(dados), JSON.stringify(dados)]);
         }
         else if (tabela === 'painAssessments') {
             const valPain = dados.painLevel || dados.pain_level || dados.nivel_dor || null;
