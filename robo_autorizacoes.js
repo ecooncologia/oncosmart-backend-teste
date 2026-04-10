@@ -17,7 +17,7 @@ const UNIMED_URL_LOGIN = 'https://www.unimedcuritiba.com.br/login';
 const UNIMED_USUARIO = 'giovana.krueger@ecooncologia.com.br'; 
 const UNIMED_SENHA = 'Eco021224';         
 
-// Configuração do E-mail (O robô envia direto)
+// Configuração do E-mail
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com', port: 587, secure: false,
     auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
@@ -62,8 +62,10 @@ async function capturarPrintUnimed(nomePaciente, dataInicio, dataFim) {
     let browser; let page; 
     
     try {
+        console.log("🚀 Abrindo navegador...");
         browser = await puppeteer.launch({
-            headless: 'new', defaultViewport: null, 
+            headless: false, // 💡 MUDADO PARA FALSE: Abre o navegador visível no Windows!
+            defaultViewport: null, 
             args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1366,768']
         });
         page = await browser.newPage();
@@ -97,6 +99,8 @@ async function capturarPrintUnimed(nomePaciente, dataInicio, dataFim) {
         await page.click('input[type="password"]'); await page.type('input[type="password"]', ' '); await page.keyboard.press('Backspace');
         await page.evaluate(() => document.querySelector('button.submit-button')?.removeAttribute('disabled'));
         await page.click('button.submit-button');
+        
+        console.log("⏳ Aguardando carregamento da área logada...");
         await new Promise(r => setTimeout(r, 8000));
 
         console.log("🗺️ Navegando para Consultas de Autorização...");
@@ -131,7 +135,7 @@ async function capturarPrintUnimed(nomePaciente, dataInicio, dataFim) {
 
         await new Promise(r => setTimeout(r, 2000));
 
-        // Insere as datas se foram informadas no Front, senão busca dos últimos 30 dias
+        // Insere as datas se foram informadas no Front
         if (dataInicio && dataFim) {
             await page.type('input[name="dataInicio"]', dataInicio); 
             await page.type('input[name="dataFim"]', dataFim);
@@ -165,7 +169,10 @@ async function capturarPrintUnimed(nomePaciente, dataInicio, dataFim) {
         console.error('❌ Erro de navegação:', error.message);
         return null;
     } finally {
-        if (browser) await browser.close();
+        if (browser) {
+            console.log("Fechando navegador...");
+            await browser.close();
+        }
     }
 }
 
@@ -174,10 +181,9 @@ async function capturarPrintUnimed(nomePaciente, dataInicio, dataFim) {
 // ==========================================
 async function processarFilaPendentes() {
     console.log('==================================================');
-    console.log('🕒 Iniciando verificação de hora em hora - ' + new Date().toLocaleString());
+    console.log('🕒 Iniciando verificação de fila - ' + new Date().toLocaleString());
 
     try {
-        // 1. Consulta no banco de dados quem está "pendente" (sem print e no status inicial)
         const [rows] = await pool.query("SELECT * FROM fluxo_pacientes_unimed");
         
         let pacientesPendentes = [];
@@ -201,12 +207,10 @@ async function processarFilaPendentes() {
 
         console.log(`📋 Encontrados ${pacientesPendentes.length} paciente(s) aguardando guia...`);
 
-        // 2. Processa 1 por 1
         for (const pac of pacientesPendentes) {
             const printUrl = await capturarPrintUnimed(pac.nome, pac.dtInicio, pac.dtFim);
 
             if (printUrl) {
-                // 3. Atualiza o Banco de Dados para 'nicolas' e anexa o print
                 pac.dadosCompletos.status = 'nicolas';
                 pac.dadosCompletos.print_url = printUrl;
 
@@ -215,11 +219,12 @@ async function processarFilaPendentes() {
                     [JSON.stringify(pac.dadosCompletos), pac.id]
                 );
 
-                // 4. Envia o e-mail diretamente pro Nicolas
-                console.log(`📧 Enviando e-mail para o Nicolas sobre o paciente ${pac.nome}...`);
+                console.log(`📧 Simulando envio de e-mail para o Nicolas sobre o paciente ${pac.nome}...`);
+                // Envio de email descomentado quando estiver certo da configuração do .env no Windows
+                /*
                 await transporter.sendMail({
                     from: '"Sistema ONCO SMART" <suporte.ecooncologia@gmail.com>',
-                    to: 'nicolas.exemplo@ecooncologia.com.br', // ⚠️ TROQUE PELO EMAIL DO NICOLAS
+                    to: 'nicolas.exemplo@ecooncologia.com.br', 
                     subject: `🟡 Ação Necessária: Verificar Dosagem - Paciente ${pac.nome}`,
                     html: `
                         <h2>Verificação de Dosagem Pendente</h2>
@@ -227,9 +232,10 @@ async function processarFilaPendentes() {
                         <p>Por favor, acesse o ONCO SMART para validar a autorização e visualizar o print.</p>
                     `
                 });
+                */
                 console.log(`✅ Fluxo do paciente ${pac.nome} concluído com sucesso! Status atualizado.`);
             } else {
-                console.log(`⏳ ${pac.nome} continua pendente. O robô tentará novamente na próxima hora.`);
+                console.log(`⏳ ${pac.nome} continua pendente. O robô tentará novamente mais tarde.`);
             }
         }
     } catch (error) {
@@ -238,13 +244,13 @@ async function processarFilaPendentes() {
 }
 
 // ==========================================
-// CRON JOB: RODA A CADA 1 HORA (Minuto 0)
+// CRON JOB
 // ==========================================
 cron.schedule('0 * * * *', () => {
     processarFilaPendentes();
 });
 
-console.log('🤖 Robô de Autorizações Unimed Iniciado. Rodando em background a cada hora...');
+console.log('🤖 Robô Iniciado.');
 
-// Descomente a linha abaixo caso queira que ele rode imediatamente ao iniciar o script, além de rodar na hora cheia:
+// 💡 ISSO FAZ O ROBÔ RODAR NA HORA QUE VOCÊ DER O COMANDO NO TERMINAL
 processarFilaPendentes();
