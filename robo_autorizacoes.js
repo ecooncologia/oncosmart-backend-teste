@@ -184,6 +184,15 @@ async function processarFilaPendentes() {
     console.log('🕒 Iniciando verificação de fila - ' + new Date().toLocaleString());
 
     try {
+        // 🛡️ GABARITO DE SEGURANÇA: Cria a tabela se ela não existir
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS fluxo_pacientes_unimed (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                id_firebase VARCHAR(100) UNIQUE,
+                dados_extras JSON
+            )
+        `);
+
         const [rows] = await pool.query("SELECT * FROM fluxo_pacientes_unimed");
         
         let pacientesPendentes = [];
@@ -220,7 +229,6 @@ async function processarFilaPendentes() {
                 );
 
                 console.log(`📧 Simulando envio de e-mail para o Nicolas sobre o paciente ${pac.nome}...`);
-                // Envio de email descomentado quando estiver certo da configuração do .env no Windows
                 /*
                 await transporter.sendMail({
                     from: '"Sistema ONCO SMART" <suporte.ecooncologia@gmail.com>',
