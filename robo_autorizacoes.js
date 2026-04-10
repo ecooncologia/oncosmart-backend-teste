@@ -261,4 +261,8 @@ cron.schedule('0 * * * *', () => {
 console.log('🤖 Robô Iniciado.');
 
 // 💡 ISSO FAZ O ROBÔ RODAR NA HORA QUE VOCÊ DER O COMANDO NO TERMINAL
-processarFilaPendentes();
+// processarFilaPendentes(); // <-- Comentei a busca no banco por enquanto
+
+// Forçando o robô a fazer o caminho visual com um paciente inventado:
+console.log("🛠️ MODO TESTE VISUAL ATIVADO");
+capturarPrintUnimed('PACIENTE TESTE ECO', '01/04/2024', '10/04/2024');
