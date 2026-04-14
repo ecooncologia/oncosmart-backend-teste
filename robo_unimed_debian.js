@@ -32,10 +32,10 @@ const transporter = nodemailer.createTransport({
 });
 
 // ==========================================
-// BANCO DE DADOS (CONECTANDO À VM - DEBIAN)
+// BANCO DE DADOS (CONECTANDO DE DENTRO DA VM)
 // ==========================================
 const pool = mysql.createPool({
-    host: process.env.DB_HOST || '127.0.0.1', // Na VM é localhost (127.0.0.1)
+    host: process.env.DB_HOST || '127.0.0.1', // ⬅️ Na VM é localhost
     user: process.env.DB_USER || 'admin_eco',
     password: process.env.DB_PASS || 'Hzmffv10@',
     database: process.env.DB_NAME || 'eco_sistema',
@@ -85,13 +85,13 @@ async function processarFilaCompleta(pacientesPendentes) {
         console.log(`🚀 ==========================================`);
         
         browser = await puppeteer.launch({
-            headless: true, // DEBIAN: Modo fantasma ativado
-            defaultViewport: { width: 1366, height: 768 }, // DEBIAN: Obriga a renderização da tela inteira
+            headless: true, // ⬅️ DEBIAN: MODO INVISÍVEL
+            defaultViewport: { width: 1366, height: 768 }, // ⬅️ Força a resolução de PC
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage', // DEBIAN: Evita travamento de memória RAM
-                '--disable-gpu',           // DEBIAN: Otimização para servidores
+                '--disable-dev-shm-usage', // ⬅️ DEBIAN: Evita travamento de RAM
+                '--disable-gpu',
                 '--disable-blink-features=AutomationControlled', 
                 '--window-size=1366,768', 
                 '--disable-web-security', 
@@ -101,6 +101,9 @@ async function processarFilaCompleta(pacientesPendentes) {
         
         page = await browser.newPage();
         
+        // Reforço extra de tela para o Linux não achatar a janela
+        await page.setViewport({ width: 1366, height: 768 });
+        
         await page.evaluateOnNewDocument(() => {
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             window.chrome = { runtime: {} };
@@ -109,7 +112,7 @@ async function processarFilaCompleta(pacientesPendentes) {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
         
         // ---------------------------------------------------------
-        // 1. LOGIN BLINDADO (1 VEZ SÓ)
+        // 1. LOGIN BLINDADO
         // ---------------------------------------------------------
         let maxTentativas = 6;
         let loginSucesso = false;
@@ -216,12 +219,32 @@ async function processarFilaCompleta(pacientesPendentes) {
         // 2. NAVEGAÇÃO ATÉ A TELA DO BOTÃO "ACESSAR" (1 VEZ SÓ)
         // ---------------------------------------------------------
         console.log('👤 Passo 1: Clicando em Perfil...');
-        await page.waitForSelector('.icone-person', { visible: true, timeout: 30000 }); 
-        await page.evaluate(() => {
-            const icon = document.querySelector('.icone-person');
-            if (icon) (icon.closest('button') || icon).click();
-        });
-        await new Promise(r => setTimeout(r, 6000)); 
+        
+        try {
+            await page.waitForSelector('.icone-person', { visible: true, timeout: 30000 }); 
+            await page.evaluate(() => {
+                const icon = document.querySelector('.icone-person');
+                if (icon) (icon.closest('button') || icon).click();
+            });
+            await new Promise(r => setTimeout(r, 6000)); 
+        } catch (erroPasso1) {
+            // 🚨 SISTEMA DE CAPTURA DE ERRO 🚨
+            console.log('\n❌ ERRO NO PASSO 1: O ícone de perfil não apareceu na tela!');
+            console.log('🔗 URL atual:', page.url());
+            
+            // Tira um print da tela inteira
+            const debugPath = path.resolve(__dirname, 'public', 'prints', `DEBUG_ERRO_MENU_${Date.now()}.png`);
+            await page.screenshot({ path: debugPath, fullPage: true });
+            
+            console.log(`📸 PRINT DE DEPURACÃO SALVO EM: ${debugPath}`);
+            console.log('🧐 Abra este arquivo no seu painel para vermos o que travou o robô!');
+            
+            // Pega o texto da tela para ajudar na leitura
+            const textoTela = await page.evaluate(() => document.body.innerText.substring(0, 300).replace(/\n/g, ' '));
+            console.log(`📄 Texto visível na tela: "${textoTela}..."`);
+            
+            throw new Error("Execução abortada para análise do Print de Erro.");
+        }
 
         console.log('🖥️ Passo 2: Clicando em "Minha área de trabalho"...');
         await page.waitForSelector('a[href="/app/home-prestador"]', { visible: true, timeout: 30000 }); 
@@ -273,7 +296,6 @@ async function processarFilaCompleta(pacientesPendentes) {
             let pagConsulta = null;
 
             try {
-                // --- Volta para a pagPrincipal e clica "Acessar" ---
                 await pagPrincipal.bringToFront();
 
                 console.log(`👉 ${pos} Clicando no botão 'Acessar'...`);
@@ -286,7 +308,6 @@ async function processarFilaCompleta(pacientesPendentes) {
                 console.log(`⏳ ${pos} Aguardando nova aba abrir (15s)...`);
                 await new Promise(r => setTimeout(r, 15000)); 
 
-                // --- Captura a nova aba ---
                 const allPages = await browser.pages();
                 if (allPages.length < 2) throw new Error("A nova aba não abriu a tempo.");
                 pagConsulta = allPages[allPages.length - 1]; 
@@ -295,7 +316,6 @@ async function processarFilaCompleta(pacientesPendentes) {
                 console.log(`✅ ${pos} Nova aba capturada! Buscando campo de Beneficiário...`);
                 await pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_tbBenef', { visible: true, timeout: 30000 }); 
 
-                // --- Inserção da carteirinha ---
                 console.log(`💳 ${pos} Inserindo a carteirinha do paciente: ${paciente.carteirinha}...`);
                 await pagConsulta.click('#ctl00_ContentPlaceHolder1_tbBenef');
                 await pagConsulta.keyboard.down('Control'); await pagConsulta.keyboard.press('A'); await pagConsulta.keyboard.up('Control'); await pagConsulta.keyboard.press('Backspace');
@@ -305,7 +325,6 @@ async function processarFilaCompleta(pacientesPendentes) {
                 await pagConsulta.keyboard.press('Tab');
                 await new Promise(r => setTimeout(r, 10000)); 
 
-                // --- Preenchimento de datas ---
                 console.log(`📅 ${pos} Preenchendo as datas de busca...`);
                 
                 const dataBdRaw = paciente.data_solicitacao || new Date().toISOString().split('T')[0];
@@ -339,7 +358,6 @@ async function processarFilaCompleta(pacientesPendentes) {
                 console.log(`🚀 ${pos} Clicando no botão Consultar...`);
                 await pagConsulta.click('#ctl00_ContentPlaceHolder1_btnBuscar');
 
-                // --- Aguarda: tabela OU mensagem "não existem" ---
                 console.log(`⏳ ${pos} Aguardando a tabela de resultados aparecer...`);
                 
                 const resultado = await Promise.race([
@@ -359,7 +377,6 @@ async function processarFilaCompleta(pacientesPendentes) {
                     continue;
                 }
 
-                // resultado === 'tabela' → Tem autorizações!
                 await new Promise(r => setTimeout(r, 5000));
 
                 console.log(`🔍 ${pos} Procurando autorização com a data inicial: ${dataInicialComBarras}...`);
@@ -404,7 +421,6 @@ async function processarFilaCompleta(pacientesPendentes) {
                 console.error(`❌ ${pos} Erro ao processar ${paciente.nome}: ${erroPaciente.message}`);
                 resultados.push({ pac: paciente, printUrl: null });
             } finally {
-                // 🔒 SEMPRE fecha a aba de consulta antes do próximo paciente
                 if (pagConsulta && !pagConsulta.isClosed()) {
                     console.log(`🔒 ${pos} Fechando aba de consulta...`);
                     await pagConsulta.close();
@@ -443,7 +459,7 @@ async function processarFilaCompleta(pacientesPendentes) {
 // ==========================================
 async function processarFilaPendentes() {
     console.log('==================================================');
-    console.log('🕒 Iniciando verificação de fila (Banco VM - DEBIAN) - ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
+    console.log('🕒 Iniciando verificação de fila (Banco VM - DEBIAN COM LOG) - ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
 
     try {
         await pool.query(`
@@ -568,7 +584,7 @@ async function processarFilaPendentes() {
 // ==========================================
 // INICIALIZAÇÃO (DEBIAN / LINUX)
 // ==========================================
-console.log('🤖 Robô Iniciado (Versão Debian - Tempos Aumentados).');
+console.log('🤖 Robô Iniciado (Versão Debian c/ Captura de Erro).');
 
 // Executa a primeira vez ao iniciar
 processarFilaPendentes();
