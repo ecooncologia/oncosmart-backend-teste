@@ -16,8 +16,7 @@ const nodemailer = require('nodemailer');
 const ANTI_CAPTCHA_KEY = 'e8460254856483ad8f0e18a5ea9abf43';
 const UNIMED_URL_LOGIN = 'https://www.unimedcuritiba.com.br/login'; 
 const UNIMED_USUARIO = 'giovana.krueger@ecooncologia.com.br'; 
-const UNIMED_SENHA = 'Eco021224';   
-      
+const UNIMED_SENHA = 'Eco021224';       
 
 // ==========================================
 // CONFIGURAÇÃO DE E-MAIL
@@ -33,34 +32,17 @@ const transporter = nodemailer.createTransport({
 });
 
 // ==========================================
-// BANCO DE DADOS (LOCAL - RODANDO NA PRÓPRIA VM)
+// BANCO DE DADOS (CONECTANDO DE DENTRO DA VM - DEBIAN)
 // ==========================================
 const pool = mysql.createPool({
-    host: process.env.DB_HOST || '127.0.0.1',
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST || '127.0.0.1', // Voltou para localhost (VM)
+    user: process.env.DB_USER || 'admin_eco',
+    password: process.env.DB_PASS || 'Hzmffv10@',
+    database: process.env.DB_NAME || 'eco_sistema',
     waitForConnections: true, 
     connectionLimit: 5, 
     queueLimit: 0
 });
-
-// ==========================================
-// DETECTAR CHROMIUM NO DEBIAN
-// ==========================================
-function encontrarChromium() {
-    const caminhos = [
-        '/usr/bin/chromium',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/google-chrome',
-        '/snap/bin/chromium'
-    ];
-    for (const caminho of caminhos) {
-        if (fs.existsSync(caminho)) return caminho;
-    }
-    return null;
-}
 
 // ==========================================
 // ANTI-CAPTCHA
@@ -86,40 +68,36 @@ async function quebrarCaptcha(url, siteKey) {
 }
 
 // ==========================================
-// FUNÇÃO DE NAVEGAÇÃO PUPPETEER (HEADLESS PARA DEBIAN)
+// 🔥 SESSÃO ÚNICA: LOGIN 1x → NAVEGA 1x → PROCESSA TODA A FILA
 // ==========================================
-async function capturarPrintUnimed(paciente) {
-    let browser; let page; 
+async function processarFilaCompleta(pacientesPendentes) {
+    let browser; let page;
     
     const printsDir = path.resolve(__dirname, 'public', 'prints');
     if (!fs.existsSync(path.resolve(__dirname, 'public'))) fs.mkdirSync(path.resolve(__dirname, 'public'));
     if (!fs.existsSync(printsDir)) fs.mkdirSync(printsDir);
 
+    const resultados = [];
+
     try {
         console.log(`\n🚀 ==========================================`);
-        console.log(`🚀 Iniciando robô para o paciente: ${paciente.nome}`);
+        console.log(`🚀 SESSÃO ÚNICA - ${pacientesPendentes.length} paciente(s) na fila`);
         console.log(`🚀 ==========================================`);
         
-        const chromiumPath = encontrarChromium();
-        const launchOptions = {
-            headless: 'new',
-            defaultViewport: { width: 1366, height: 768 },
+        browser = await puppeteer.launch({
+            headless: true, // MUDADO PARA O DEBIAN: Modo fantasma ativado (sem interface gráfica)
+            defaultViewport: null,
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage', // OBRIGATÓRIO NO LINUX: Evita crash por falta de memória compartilhada
+                '--disable-gpu',           // Otimização para servidores sem placa de vídeo
                 '--disable-blink-features=AutomationControlled', 
                 '--window-size=1366,768', 
                 '--disable-web-security', 
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--single-process',
-                '--no-zygote'
+                '--disable-features=IsolateOrigins,site-per-process'
             ]
-        };
-        if (chromiumPath) launchOptions.executablePath = chromiumPath;
-        
-        browser = await puppeteer.launch(launchOptions);
+        });
         
         page = await browser.newPage();
         
@@ -131,7 +109,7 @@ async function capturarPrintUnimed(paciente) {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
         
         // ---------------------------------------------------------
-        // 1. LOGIN BLINDADO
+        // 1. LOGIN BLINDADO (1 VEZ SÓ)
         // ---------------------------------------------------------
         let maxTentativas = 6;
         let loginSucesso = false;
@@ -235,7 +213,7 @@ async function capturarPrintUnimed(paciente) {
         await new Promise(resolve => setTimeout(resolve, 5000));
 
         // ---------------------------------------------------------
-        // 2. NAVEGAÇÃO PERFEITA 
+        // 2. NAVEGAÇÃO ATÉ A TELA DO BOTÃO "ACESSAR" (1 VEZ SÓ)
         // ---------------------------------------------------------
         console.log('👤 Passo 1: Clicando em Perfil...');
         await page.waitForSelector('.icone-person', { visible: true, timeout: 15000 });
@@ -265,127 +243,190 @@ async function capturarPrintUnimed(paciente) {
         await page.click('#prestador_6');
         await new Promise(r => setTimeout(r, 3000));
 
-        console.log("👉 Passo 6: Clicando no botão 'Acessar'...");
-        await page.waitForSelector('button.custom-button.btn-primary', { visible: true, timeout: 15000 });
-        await page.evaluate(() => {
-            const btn = Array.from(document.querySelectorAll('button')).find(el => el.innerText.includes('Acessar'));
-            if(btn) btn.click();
-        });
-        
-        console.log("⏳ Aguardando 10 segundos para a Nova Aba abrir por completo...");
-        await new Promise(r => setTimeout(r, 10000)); 
+        const pagPrincipal = page;
+        const urlPrincipal = pagPrincipal.url();
+        console.log(`📌 Página principal salva: ${urlPrincipal}`);
 
         // ---------------------------------------------------------
-        // 3. ABA NOVA: INSERÇÃO DIRETA DA CARTEIRINHA
+        // 3. LOOP DA FILA — ABRE/FECHA ABA PARA CADA PACIENTE
         // ---------------------------------------------------------
-        console.log("🔄 Mudando o controle do robô para a nova aba...");
-        const pages = await browser.pages();
-        if (pages.length < 2) throw new Error("❌ A nova aba não abriu a tempo.");
-        page = pages[pages.length - 1]; 
-        await page.bringToFront(); 
-        
-        console.log("✅ Nova aba detectada! Buscando o campo de Beneficiário...");
-        await page.waitForSelector('#ctl00_ContentPlaceHolder1_tbBenef', { visible: true, timeout: 20000 });
+        console.log(`\n🔄 ==========================================`);
+        console.log(`🔄 PROCESSANDO FILA: ${pacientesPendentes.length} PACIENTE(S)`);
+        console.log(`🔄 ==========================================`);
 
-        console.log(`💳 Inserindo a carteirinha do paciente: ${paciente.carteirinha}...`);
-        await page.click('#ctl00_ContentPlaceHolder1_tbBenef');
-        await page.keyboard.down('Control'); await page.keyboard.press('A'); await page.keyboard.up('Control'); await page.keyboard.press('Backspace');
-        await page.type('#ctl00_ContentPlaceHolder1_tbBenef', paciente.carteirinha, { delay: 100 }); 
-
-        console.log("⌨️ Pressionando TAB para acionar o PostBack...");
-        await page.keyboard.press('Tab');
-        await new Promise(r => setTimeout(r, 7000)); 
-
-        // ---------------------------------------------------------
-        // 4. PREENCHIMENTO DE DATAS E CONSULTA
-        // ---------------------------------------------------------
-        console.log("📅 Preenchendo as datas de busca...");
-        
-        const dataBdRaw = paciente.data_solicitacao || new Date().toISOString().split('T')[0];
-        const dataApenasNumeros = dataBdRaw.replace(/\D/g, ''); 
-        
-        const ano = dataApenasNumeros.substring(0, 4);
-        const mes = dataApenasNumeros.substring(4, 6);
-        const dia = dataApenasNumeros.substring(6, 8);
-        const dataInicialFormatada = `${dia}${mes}${ano}`; 
-        const dataInicialComBarras = `${dia}/${mes}/${ano}`; 
-
-        const hoje = new Date();
-        const dataFinalFormatada = `${String(hoje.getDate()).padStart(2, '0')}${String(hoje.getMonth() + 1).padStart(2, '0')}${hoje.getFullYear()}`;
-
-        await page.waitForSelector('#ctl00_ContentPlaceHolder1_tbDataInicial', { visible: true, timeout: 15000 });
-        
-        await page.click('#ctl00_ContentPlaceHolder1_tbDataInicial');
-        await page.keyboard.press('Home');
-        for(let i=0; i<10; i++) await page.keyboard.press('Delete');
-        await page.type('#ctl00_ContentPlaceHolder1_tbDataInicial', dataInicialFormatada, { delay: 150 }); 
-        
-        await new Promise(r => setTimeout(r, 1000));
-        
-        await page.click('#ctl00_ContentPlaceHolder1_tbDataFinal');
-        await page.keyboard.press('Home');
-        for(let i=0; i<10; i++) await page.keyboard.press('Delete');
-        await page.type('#ctl00_ContentPlaceHolder1_tbDataFinal', dataFinalFormatada, { delay: 150 }); 
-
-        await new Promise(r => setTimeout(r, 2000));
-
-        console.log("🚀 Clicando no botão Consultar...");
-        await page.click('#ctl00_ContentPlaceHolder1_btnBuscar');
-
-        // ---------------------------------------------------------
-        // 5. A TABELA DE AUTORIZAÇÕES E CLIQUE NA GUIA
-        // ---------------------------------------------------------
-        console.log("⏳ Aguardando a tabela de autorizações carregar...");
-        
-        try {
-            await page.waitForSelector('table[id*="gvAutorizacoes"]', { visible: true, timeout: 15000 });
-        } catch (e) {
-            console.log("⚠️ Nenhuma autorização encontrada ou tabela demorou muito.");
-            return null; 
-        }
-        await new Promise(r => setTimeout(r, 3000));
-
-        console.log(`🔍 Procurando autorização com a data inicial: ${dataInicialComBarras}...`);
-        
-        const achouGuia = await page.evaluate((dataDesejada) => {
-            const table = document.querySelector('table[id*="gvAutorizacoes"]');
-            if (!table) return false;
+        for (let idx = 0; idx < pacientesPendentes.length; idx++) {
+            const paciente = pacientesPendentes[idx];
+            const pos = `[${idx + 1}/${pacientesPendentes.length}]`;
             
-            const rows = Array.from(table.querySelectorAll('tr'));
-            
-            for (let i = 1; i < rows.length; i++) {
-                if (rows[i].innerText.includes(dataDesejada)) {
-                    const linkAutorizacao = rows[i].querySelector('a[id*="lbAutorizacao"]');
-                    if (linkAutorizacao) {
-                        linkAutorizacao.click();
-                        return true;
+            console.log(`\n${'═'.repeat(50)}`);
+            console.log(`🔍 ${pos} Paciente: ${paciente.nome}`);
+            console.log(`💳 ${pos} Carteirinha: ${paciente.carteirinha}`);
+            console.log(`${'═'.repeat(50)}`);
+
+            if (!paciente.carteirinha) {
+                console.log(`⚠️ ${pos} Sem carteirinha. Pulando...`);
+                resultados.push({ pac: paciente, printUrl: null });
+                continue;
+            }
+
+            let pagConsulta = null;
+
+            try {
+                await pagPrincipal.bringToFront();
+
+                console.log(`👉 ${pos} Clicando no botão 'Acessar'...`);
+                await pagPrincipal.waitForSelector('button.custom-button.btn-primary', { visible: true, timeout: 15000 });
+                await pagPrincipal.evaluate(() => {
+                    const btn = Array.from(document.querySelectorAll('button')).find(el => el.innerText.includes('Acessar'));
+                    if(btn) btn.click();
+                });
+                
+                console.log(`⏳ ${pos} Aguardando nova aba abrir (10s)...`);
+                await new Promise(r => setTimeout(r, 10000)); 
+
+                const allPages = await browser.pages();
+                if (allPages.length < 2) throw new Error("A nova aba não abriu a tempo.");
+                pagConsulta = allPages[allPages.length - 1]; 
+                await pagConsulta.bringToFront(); 
+                
+                console.log(`✅ ${pos} Nova aba capturada! Buscando campo de Beneficiário...`);
+                await pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_tbBenef', { visible: true, timeout: 20000 });
+
+                console.log(`💳 ${pos} Inserindo a carteirinha do paciente: ${paciente.carteirinha}...`);
+                await pagConsulta.click('#ctl00_ContentPlaceHolder1_tbBenef');
+                await pagConsulta.keyboard.down('Control'); await pagConsulta.keyboard.press('A'); await pagConsulta.keyboard.up('Control'); await pagConsulta.keyboard.press('Backspace');
+                await pagConsulta.type('#ctl00_ContentPlaceHolder1_tbBenef', paciente.carteirinha, { delay: 100 }); 
+
+                console.log(`⌨️ ${pos} Pressionando TAB para acionar o PostBack...`);
+                await pagConsulta.keyboard.press('Tab');
+                await new Promise(r => setTimeout(r, 7000)); 
+
+                console.log(`📅 ${pos} Preenchendo as datas de busca...`);
+                
+                const dataBdRaw = paciente.data_solicitacao || new Date().toISOString().split('T')[0];
+                const dataApenasNumeros = dataBdRaw.replace(/\D/g, ''); 
+                
+                const ano = dataApenasNumeros.substring(0, 4);
+                const mes = dataApenasNumeros.substring(4, 6);
+                const dia = dataApenasNumeros.substring(6, 8);
+                const dataInicialFormatada = `${dia}${mes}${ano}`; 
+                const dataInicialComBarras = `${dia}/${mes}/${ano}`; 
+
+                const hoje = new Date();
+                const dataFinalFormatada = `${String(hoje.getDate()).padStart(2, '0')}${String(hoje.getMonth() + 1).padStart(2, '0')}${hoje.getFullYear()}`;
+
+                await pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_tbDataInicial', { visible: true, timeout: 15000 });
+                
+                await pagConsulta.click('#ctl00_ContentPlaceHolder1_tbDataInicial');
+                await pagConsulta.keyboard.press('Home');
+                for(let i=0; i<10; i++) await pagConsulta.keyboard.press('Delete');
+                await pagConsulta.type('#ctl00_ContentPlaceHolder1_tbDataInicial', dataInicialFormatada, { delay: 150 }); 
+                
+                await new Promise(r => setTimeout(r, 1000));
+                
+                await pagConsulta.click('#ctl00_ContentPlaceHolder1_tbDataFinal');
+                await pagConsulta.keyboard.press('Home');
+                for(let i=0; i<10; i++) await pagConsulta.keyboard.press('Delete');
+                await pagConsulta.type('#ctl00_ContentPlaceHolder1_tbDataFinal', dataFinalFormatada, { delay: 150 }); 
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                console.log(`🚀 ${pos} Clicando no botão Consultar...`);
+                await pagConsulta.click('#ctl00_ContentPlaceHolder1_btnBuscar');
+
+                console.log(`⏳ ${pos} Aguardando resultado...`);
+                
+                const resultado = await Promise.race([
+                    pagConsulta.waitForSelector('table[id*="gvAutorizacoes"]', { visible: true, timeout: 20000 }).then(() => 'tabela'),
+                    pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_lbGridVazio', { visible: true, timeout: 20000 }).then(() => 'vazio')
+                ]).catch(() => 'timeout');
+
+                if (resultado === 'vazio') {
+                    console.log(`📭 ${pos} "Não existem autorizações a serem apresentadas." Próximo...`);
+                    resultados.push({ pac: paciente, printUrl: null });
+                    continue;
+                }
+
+                if (resultado === 'timeout') {
+                    console.log(`⚠️ ${pos} Timeout na consulta. Próximo...`);
+                    resultados.push({ pac: paciente, printUrl: null });
+                    continue;
+                }
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                console.log(`🔍 ${pos} Procurando autorização com a data inicial: ${dataInicialComBarras}...`);
+                
+                const achouGuia = await pagConsulta.evaluate((dataDesejada) => {
+                    const table = document.querySelector('table[id*="gvAutorizacoes"]');
+                    if (!table) return false;
+                    
+                    const rows = Array.from(table.querySelectorAll('tr'));
+                    
+                    for (let i = 1; i < rows.length; i++) {
+                        if (rows[i].innerText.includes(dataDesejada)) {
+                            const linkAutorizacao = rows[i].querySelector('a[id*="lbAutorizacao"]');
+                            if (linkAutorizacao) {
+                                linkAutorizacao.click();
+                                return true;
+                            }
+                        }
                     }
+                    return false;
+                }, dataInicialComBarras);
+
+                if (!achouGuia) {
+                    console.log(`⚠️ ${pos} Nenhuma autorização encontrada na Unimed para o dia ${dataInicialComBarras}.`);
+                    resultados.push({ pac: paciente, printUrl: null });
+                    continue;
+                }
+
+                console.log(`📸 ${pos} Guia encontrada! Aguardando o Print final carregar (10 segundos)...`);
+                await new Promise(r => setTimeout(r, 10000)); 
+                
+                const fileName = `print_unimed_${Date.now()}.png`;
+                const savePath = path.resolve(__dirname, 'public', 'prints', fileName);
+                await pagConsulta.screenshot({ path: savePath, fullPage: true });
+                
+                const printUrl = `/prints/${fileName}`;
+                console.log(`✅ ${pos} Print capturado! Salvo em: public/prints/${fileName}`);
+                
+                resultados.push({ pac: paciente, printUrl });
+
+            } catch (erroPaciente) {
+                console.error(`❌ ${pos} Erro ao processar ${paciente.nome}: ${erroPaciente.message}`);
+                resultados.push({ pac: paciente, printUrl: null });
+            } finally {
+                if (pagConsulta && !pagConsulta.isClosed()) {
+                    console.log(`🔒 ${pos} Fechando aba de consulta...`);
+                    await pagConsulta.close();
                 }
             }
-            return false;
-        }, dataInicialComBarras);
-
-        if (!achouGuia) {
-            console.log(`⚠️ Nenhuma autorização encontrada na Unimed para o dia ${dataInicialComBarras}.`);
-            return null; 
         }
 
-        console.log("📸 Guia encontrada! Aguardando o Print final carregar (10 segundos)...");
-        await new Promise(r => setTimeout(r, 10000)); 
+        // ---------------------------------------------------------
+        // 4. RESUMO DA SESSÃO
+        // ---------------------------------------------------------
+        const encontrados = resultados.filter(r => r.printUrl);
+        const naoEncontrados = resultados.filter(r => !r.printUrl);
         
-        const fileName = `print_unimed_${Date.now()}.png`;
-        const savePath = path.resolve(__dirname, 'public', 'prints', fileName);
-        await page.screenshot({ path: savePath, fullPage: true });
-        
-        console.log(`✅ Print capturado com sucesso! Salvo em: public/prints/${fileName}`);
-        
-        return `/prints/${fileName}`;
+        console.log(`\n📊 ==========================================`);
+        console.log(`📊 RESUMO DA SESSÃO`);
+        console.log(`📊 ✅ Guias encontradas: ${encontrados.length}`);
+        console.log(`📊 ⏳ Sem autorização:   ${naoEncontrados.length}`);
+        console.log(`📊 📋 Total processado:  ${resultados.length}`);
+        console.log(`📊 ==========================================\n`);
+
+        return resultados;
 
     } catch (error) {
-        console.error('❌ Erro no robô:', error.message);
-        return null;
+        console.error('❌ Erro fatal na sessão:', error.message);
+        return resultados;
     } finally {
-        if (browser) await browser.close();
+        if (browser) {
+            console.log('🔒 Fechando browser...');
+            await browser.close();
+        }
     }
 }
 
@@ -394,7 +435,7 @@ async function capturarPrintUnimed(paciente) {
 // ==========================================
 async function processarFilaPendentes() {
     console.log('==================================================');
-    console.log('🕒 Iniciando verificação de fila (Banco Local) - ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
+    console.log('🕒 Iniciando verificação de fila (Banco VM - DEBIAN) - ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
 
     try {
         await pool.query(`
@@ -449,18 +490,15 @@ async function processarFilaPendentes() {
 
         console.log(`📋 Encontrados ${pacientesPendentes.length} paciente(s) aguardando guia...`);
 
-        for (const pac of pacientesPendentes) {
-            if(!pac.carteirinha) {
-                console.log(`⚠️ Paciente ${pac.nome} não possui carteirinha informada. Pulando...`);
-                continue;
-            }
+        const resultados = await processarFilaCompleta(pacientesPendentes);
 
-            const printUrl = await capturarPrintUnimed(pac);
+        console.log('\n💾 Atualizando banco de dados com os resultados...');
+
+        for (const { pac, printUrl } of resultados) {
+            const now = new Date();
+            const dataHoraVarredura = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
             
-            // ✅ GRAVA data_revisado_robo COMO ISO (O HTML ESPERA ESSE CAMPO)
-            const timestampISO = new Date().toISOString();
-            
-            pac.dadosCompletos.data_revisado_robo = timestampISO;
+            pac.dadosCompletos.ultima_varredura = dataHoraVarredura; 
 
             if (printUrl) {
                 pac.dadosCompletos.status = 'nicolas'; 
@@ -507,33 +545,28 @@ async function processarFilaPendentes() {
                 }
 
             } else {
-                // ✅ MESMO SEM ACHAR GUIA, REGISTRA O TIMESTAMP ISO DA VARREDURA
                 await pool.query(
                     `UPDATE fluxo_pacientes_unimed SET dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?) WHERE id_firebase = ?`,
-                    [JSON.stringify({ data_revisado_robo: timestampISO }), pac.id] 
+                    [JSON.stringify({ ultima_varredura: dataHoraVarredura }), pac.id] 
                 );
                 console.log(`⏳ Varredura registrada para ${pac.nome}. Continua na fila para a próxima checagem.`);
             }
         }
     } catch (error) {
-        console.error('❌ Erro de conexão com o banco local:', error.message);
+        console.error('❌ Erro de conexão com o banco da VM:', error.message);
     }
 }
 
 // ==========================================
-// INICIALIZAÇÃO + CRON (4x ao dia)
+// INICIALIZAÇÃO (DEBIAN / LINUX)
 // ==========================================
-console.log('🤖 ============================================');
-console.log('🤖 Robô Unimed - Debian 12 (Produção)');
-console.log('🤖 Horários: 08:00 | 14:00 | 18:00 | 22:00');
-console.log('🤖 ============================================');
+console.log('🤖 Robô Iniciado (Versão Debian - Sessão Única).');
 
-cron.schedule('0 8,14,18,22 * * *', () => {
-    console.log(`\n⏰ CRON DISPARADO: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
-    processarFilaPendentes();
-}, {
-    timezone: "America/Sao_Paulo"
-});
-
-console.log('🚀 Executando varredura inicial...');
+// Executa a primeira vez ao iniciar o script
 processarFilaPendentes();
+
+// Agendador (Cron) ativado para rodar a cada 1 hora no servidor (no minuto 0 de cada hora)
+cron.schedule('0 * * * *', () => { 
+    console.log('\n⏰ Iniciando varredura programada...');
+    processarFilaPendentes(); 
+});
