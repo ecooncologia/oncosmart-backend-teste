@@ -16,8 +16,8 @@ const nodemailer = require('nodemailer');
 const ANTI_CAPTCHA_KEY = 'e8460254856483ad8f0e18a5ea9abf43';
 const UNIMED_URL_LOGIN = 'https://www.unimedcuritiba.com.br/login'; 
 const UNIMED_USUARIO = 'giovana.krueger@ecooncologia.com.br'; 
-const UNIMED_SENHA = 'Eco021224';       
-
+const UNIMED_SENHA = 'Eco021224';   
+      
 // ==========================================
 // CONFIGURAÇÃO DE E-MAIL
 // ==========================================
@@ -32,10 +32,10 @@ const transporter = nodemailer.createTransport({
 });
 
 // ==========================================
-// BANCO DE DADOS (CONECTANDO DE DENTRO DA VM - DEBIAN)
+// BANCO DE DADOS (CONECTANDO À VM - DEBIAN)
 // ==========================================
 const pool = mysql.createPool({
-    host: process.env.DB_HOST || '127.0.0.1', // Voltou para localhost (VM)
+    host: process.env.DB_HOST || '127.0.0.1', // Na VM é localhost
     user: process.env.DB_USER || 'admin_eco',
     password: process.env.DB_PASS || 'Hzmffv10@',
     database: process.env.DB_NAME || 'eco_sistema',
@@ -85,13 +85,13 @@ async function processarFilaCompleta(pacientesPendentes) {
         console.log(`🚀 ==========================================`);
         
         browser = await puppeteer.launch({
-            headless: true, // MUDADO PARA O DEBIAN: Modo fantasma ativado (sem interface gráfica)
-            defaultViewport: null,
+            headless: true, // DEBIAN: Modo fantasma ativado
+            defaultViewport: { width: 1366, height: 768 }, // DEBIAN: OBRIGATÓRIO! Força a tela grande para não sumir o menu
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage', // OBRIGATÓRIO NO LINUX: Evita crash por falta de memória compartilhada
-                '--disable-gpu',           // Otimização para servidores sem placa de vídeo
+                '--disable-dev-shm-usage', // DEBIAN: Evita erro de memória RAM no Linux
+                '--disable-gpu',
                 '--disable-blink-features=AutomationControlled', 
                 '--window-size=1366,768', 
                 '--disable-web-security', 
@@ -243,6 +243,7 @@ async function processarFilaCompleta(pacientesPendentes) {
         await page.click('#prestador_6');
         await new Promise(r => setTimeout(r, 3000));
 
+        // A partir daqui, 'page' é a pagPrincipal (tem o botão "Acessar")
         const pagPrincipal = page;
         const urlPrincipal = pagPrincipal.url();
         console.log(`📌 Página principal salva: ${urlPrincipal}`);
@@ -272,6 +273,7 @@ async function processarFilaCompleta(pacientesPendentes) {
             let pagConsulta = null;
 
             try {
+                // --- Volta para a pagPrincipal e clica "Acessar" ---
                 await pagPrincipal.bringToFront();
 
                 console.log(`👉 ${pos} Clicando no botão 'Acessar'...`);
@@ -284,6 +286,7 @@ async function processarFilaCompleta(pacientesPendentes) {
                 console.log(`⏳ ${pos} Aguardando nova aba abrir (10s)...`);
                 await new Promise(r => setTimeout(r, 10000)); 
 
+                // --- Captura a nova aba ---
                 const allPages = await browser.pages();
                 if (allPages.length < 2) throw new Error("A nova aba não abriu a tempo.");
                 pagConsulta = allPages[allPages.length - 1]; 
@@ -292,6 +295,7 @@ async function processarFilaCompleta(pacientesPendentes) {
                 console.log(`✅ ${pos} Nova aba capturada! Buscando campo de Beneficiário...`);
                 await pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_tbBenef', { visible: true, timeout: 20000 });
 
+                // --- Inserção da carteirinha ---
                 console.log(`💳 ${pos} Inserindo a carteirinha do paciente: ${paciente.carteirinha}...`);
                 await pagConsulta.click('#ctl00_ContentPlaceHolder1_tbBenef');
                 await pagConsulta.keyboard.down('Control'); await pagConsulta.keyboard.press('A'); await pagConsulta.keyboard.up('Control'); await pagConsulta.keyboard.press('Backspace');
@@ -301,6 +305,7 @@ async function processarFilaCompleta(pacientesPendentes) {
                 await pagConsulta.keyboard.press('Tab');
                 await new Promise(r => setTimeout(r, 7000)); 
 
+                // --- Preenchimento de datas ---
                 console.log(`📅 ${pos} Preenchendo as datas de busca...`);
                 
                 const dataBdRaw = paciente.data_solicitacao || new Date().toISOString().split('T')[0];
@@ -334,6 +339,7 @@ async function processarFilaCompleta(pacientesPendentes) {
                 console.log(`🚀 ${pos} Clicando no botão Consultar...`);
                 await pagConsulta.click('#ctl00_ContentPlaceHolder1_btnBuscar');
 
+                // --- Aguarda: tabela OU mensagem "não existem" ---
                 console.log(`⏳ ${pos} Aguardando resultado...`);
                 
                 const resultado = await Promise.race([
@@ -353,6 +359,7 @@ async function processarFilaCompleta(pacientesPendentes) {
                     continue;
                 }
 
+                // resultado === 'tabela' → Tem autorizações!
                 await new Promise(r => setTimeout(r, 3000));
 
                 console.log(`🔍 ${pos} Procurando autorização com a data inicial: ${dataInicialComBarras}...`);
@@ -397,6 +404,7 @@ async function processarFilaCompleta(pacientesPendentes) {
                 console.error(`❌ ${pos} Erro ao processar ${paciente.nome}: ${erroPaciente.message}`);
                 resultados.push({ pac: paciente, printUrl: null });
             } finally {
+                // 🔒 SEMPRE fecha a aba de consulta antes do próximo paciente
                 if (pagConsulta && !pagConsulta.isClosed()) {
                     console.log(`🔒 ${pos} Fechando aba de consulta...`);
                     await pagConsulta.close();
@@ -435,7 +443,7 @@ async function processarFilaCompleta(pacientesPendentes) {
 // ==========================================
 async function processarFilaPendentes() {
     console.log('==================================================');
-    console.log('🕒 Iniciando verificação de fila (Banco VM - DEBIAN) - ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
+    console.log('🕒 Iniciando verificação de fila (Banco VM) - ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
 
     try {
         await pool.query(`
@@ -562,10 +570,10 @@ async function processarFilaPendentes() {
 // ==========================================
 console.log('🤖 Robô Iniciado (Versão Debian - Sessão Única).');
 
-// Executa a primeira vez ao iniciar o script
+// Executa a primeira vez ao iniciar
 processarFilaPendentes();
 
-// Agendador (Cron) ativado para rodar a cada 1 hora no servidor (no minuto 0 de cada hora)
+// Agendador (Cron) ativado para rodar a cada 1 hora no servidor
 cron.schedule('0 * * * *', () => { 
     console.log('\n⏰ Iniciando varredura programada...');
     processarFilaPendentes(); 
