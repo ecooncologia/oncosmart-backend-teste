@@ -59,7 +59,7 @@ function encontrarChromium() {
     for (const caminho of caminhos) {
         if (fs.existsSync(caminho)) return caminho;
     }
-    return null; // Vai usar o Chromium bundled do Puppeteer
+    return null;
 }
 
 // ==========================================
@@ -457,10 +457,10 @@ async function processarFilaPendentes() {
 
             const printUrl = await capturarPrintUnimed(pac);
             
-            const now = new Date();
-            const dataHoraVarredura = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            // ✅ GRAVA data_revisado_robo COMO ISO (O HTML ESPERA ESSE CAMPO)
+            const timestampISO = new Date().toISOString();
             
-            pac.dadosCompletos.ultima_varredura = dataHoraVarredura; 
+            pac.dadosCompletos.data_revisado_robo = timestampISO;
 
             if (printUrl) {
                 pac.dadosCompletos.status = 'nicolas'; 
@@ -507,9 +507,10 @@ async function processarFilaPendentes() {
                 }
 
             } else {
+                // ✅ MESMO SEM ACHAR GUIA, REGISTRA O TIMESTAMP ISO DA VARREDURA
                 await pool.query(
                     `UPDATE fluxo_pacientes_unimed SET dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?) WHERE id_firebase = ?`,
-                    [JSON.stringify({ ultima_varredura: dataHoraVarredura }), pac.id] 
+                    [JSON.stringify({ data_revisado_robo: timestampISO }), pac.id] 
                 );
                 console.log(`⏳ Varredura registrada para ${pac.nome}. Continua na fila para a próxima checagem.`);
             }
@@ -527,7 +528,6 @@ console.log('🤖 Robô Unimed - Debian 12 (Produção)');
 console.log('🤖 Horários: 08:00 | 14:00 | 18:00 | 22:00');
 console.log('🤖 ============================================');
 
-// ⏰ CRON: Roda às 08:00, 14:00, 18:00 e 22:00 (horário de Brasília)
 cron.schedule('0 8,14,18,22 * * *', () => {
     console.log(`\n⏰ CRON DISPARADO: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
     processarFilaPendentes();
@@ -535,6 +535,5 @@ cron.schedule('0 8,14,18,22 * * *', () => {
     timezone: "America/Sao_Paulo"
 });
 
-// 🚀 Executa UMA VEZ ao iniciar o serviço (para não esperar o próximo horário)
 console.log('🚀 Executando varredura inicial...');
 processarFilaPendentes();
