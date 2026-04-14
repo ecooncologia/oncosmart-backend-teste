@@ -35,7 +35,7 @@ const transporter = nodemailer.createTransport({
 // BANCO DE DADOS (CONECTANDO À VM - DEBIAN)
 // ==========================================
 const pool = mysql.createPool({
-    host: process.env.DB_HOST || '127.0.0.1', // Na VM é localhost
+    host: process.env.DB_HOST || '127.0.0.1', // Na VM é localhost (127.0.0.1)
     user: process.env.DB_USER || 'admin_eco',
     password: process.env.DB_PASS || 'Hzmffv10@',
     database: process.env.DB_NAME || 'eco_sistema',
@@ -86,12 +86,12 @@ async function processarFilaCompleta(pacientesPendentes) {
         
         browser = await puppeteer.launch({
             headless: true, // DEBIAN: Modo fantasma ativado
-            defaultViewport: { width: 1366, height: 768 }, // DEBIAN: OBRIGATÓRIO! Força a tela grande para não sumir o menu
+            defaultViewport: { width: 1366, height: 768 }, // DEBIAN: Obriga a renderização da tela inteira
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage', // DEBIAN: Evita erro de memória RAM no Linux
-                '--disable-gpu',
+                '--disable-dev-shm-usage', // DEBIAN: Evita travamento de memória RAM
+                '--disable-gpu',           // DEBIAN: Otimização para servidores
                 '--disable-blink-features=AutomationControlled', 
                 '--window-size=1366,768', 
                 '--disable-web-security', 
@@ -118,8 +118,8 @@ async function processarFilaCompleta(pacientesPendentes) {
             console.log(`\n🔄 [TENTATIVA ${tentativa}/${maxTentativas}] Iniciando processo de login...`);
             
             try {
-                await page.goto(UNIMED_URL_LOGIN, { waitUntil: 'networkidle2' });
-                await new Promise(resolve => setTimeout(resolve, 6000)); 
+                await page.goto(UNIMED_URL_LOGIN, { waitUntil: 'networkidle2', timeout: 60000 });
+                await new Promise(resolve => setTimeout(resolve, 10000)); 
 
                 await page.evaluate(() => {
                     const btns = Array.from(document.querySelectorAll('button, a'));
@@ -129,18 +129,18 @@ async function processarFilaCompleta(pacientesPendentes) {
                 await new Promise(resolve => setTimeout(resolve, 2000)); 
 
                 console.log('🔑 Preenchendo as Credenciais...');
-                await page.waitForSelector('input[type="email"]', { timeout: 15000 });
+                await page.waitForSelector('input[type="email"]', { timeout: 30000 }); 
                 await page.click('input[type="email"]', { clickCount: 3 });
                 await page.keyboard.press('Backspace');
-                await page.type('input[type="email"]', UNIMED_USUARIO, { delay: 100 }); 
+                await page.type('input[type="email"]', UNIMED_USUARIO, { delay: 150 }); 
                 
                 await page.click('input[type="password"]', { clickCount: 3 });
                 await page.keyboard.press('Backspace');
-                await page.type('input[type="password"]', UNIMED_SENHA, { delay: 100 }); 
+                await page.type('input[type="password"]', UNIMED_SENHA, { delay: 150 }); 
                 await page.mouse.click(10, 10); 
                 
                 console.log('🔍 Coletando SiteKey do Captcha...');
-                await page.waitForSelector('iframe[src*="google.com/recaptcha"]', { timeout: 15000 });
+                await page.waitForSelector('iframe[src*="google.com/recaptcha"]', { timeout: 30000 }); 
                 const dynamicSiteKey = await page.evaluate(() => {
                     const iframe = document.querySelector('iframe[src*="google.com/recaptcha"]');
                     return iframe ? iframe.src.match(/[?&]k=([^&]+)/)?.[1] : null;
@@ -172,13 +172,13 @@ async function processarFilaCompleta(pacientesPendentes) {
                     }
                 }, tokenCaptcha);
                 
-                await new Promise(resolve => setTimeout(resolve, 4000)); 
+                await new Promise(resolve => setTimeout(resolve, 5000)); 
                 
                 console.log('🔄 Acordando o React...');
                 await page.click('input[type="password"]');
                 await page.type('input[type="password"]', ' '); 
                 await page.keyboard.press('Backspace'); 
-                await new Promise(resolve => setTimeout(resolve, 2000)); 
+                await new Promise(resolve => setTimeout(resolve, 3000)); 
 
                 console.log('🚪 Clicando em Entrar...');
                 await page.evaluate(() => {
@@ -187,8 +187,8 @@ async function processarFilaCompleta(pacientesPendentes) {
                 });
                 await page.click('button.submit-button');
                 
-                console.log('⏳ Aguardando Área de Trabalho carregar (15 segundos)...');
-                await new Promise(r => setTimeout(r, 15000)); 
+                console.log('⏳ Aguardando Área de Trabalho carregar (Aguardando até 20 segundos)...');
+                await new Promise(r => setTimeout(r, 20000)); 
                 
                 const analise = await page.evaluate(() => {
                     if (document.querySelector('.icone-person') || document.body.innerText.includes('Área de trabalho')) return 'sucesso';
@@ -210,38 +210,38 @@ async function processarFilaCompleta(pacientesPendentes) {
 
         if (!loginSucesso) throw new Error("Todas as tentativas de login falharam. Abortando.");
 
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise(resolve => setTimeout(resolve, 8000)); 
 
         // ---------------------------------------------------------
         // 2. NAVEGAÇÃO ATÉ A TELA DO BOTÃO "ACESSAR" (1 VEZ SÓ)
         // ---------------------------------------------------------
         console.log('👤 Passo 1: Clicando em Perfil...');
-        await page.waitForSelector('.icone-person', { visible: true, timeout: 15000 });
+        await page.waitForSelector('.icone-person', { visible: true, timeout: 30000 }); 
         await page.evaluate(() => {
             const icon = document.querySelector('.icone-person');
             if (icon) (icon.closest('button') || icon).click();
         });
-        await new Promise(r => setTimeout(r, 4000)); 
+        await new Promise(r => setTimeout(r, 6000)); 
 
         console.log('🖥️ Passo 2: Clicando em "Minha área de trabalho"...');
-        await page.waitForSelector('a[href="/app/home-prestador"]', { visible: true, timeout: 15000 });
+        await page.waitForSelector('a[href="/app/home-prestador"]', { visible: true, timeout: 30000 }); 
         await page.evaluate(() => document.querySelector('a[href="/app/home-prestador"]').click());
-        await new Promise(r => setTimeout(r, 8000)); 
+        await new Promise(r => setTimeout(r, 10000)); 
 
         console.log('📁 Passo 3: Clicando na "Área de Trabalho"...');
-        await page.waitForSelector('#prestador_0', { visible: true, timeout: 15000 });
+        await page.waitForSelector('#prestador_0', { visible: true, timeout: 30000 });
         await page.click('#prestador_0');
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 5000)); 
 
         console.log("🗺️ Passo 4: Clicando em 'Operações / Autorizações'...");
-        await page.waitForSelector('#prestador_1', { visible: true, timeout: 15000 });
+        await page.waitForSelector('#prestador_1', { visible: true, timeout: 30000 });
         await page.click('#prestador_1');
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 5000));
 
         console.log("🗺️ Passo 5: Clicando em 'Consulta de autorizações de internamento'...");
-        await page.waitForSelector('#prestador_6', { visible: true, timeout: 15000 });
+        await page.waitForSelector('#prestador_6', { visible: true, timeout: 30000 });
         await page.click('#prestador_6');
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 5000));
 
         // A partir daqui, 'page' é a pagPrincipal (tem o botão "Acessar")
         const pagPrincipal = page;
@@ -277,14 +277,14 @@ async function processarFilaCompleta(pacientesPendentes) {
                 await pagPrincipal.bringToFront();
 
                 console.log(`👉 ${pos} Clicando no botão 'Acessar'...`);
-                await pagPrincipal.waitForSelector('button.custom-button.btn-primary', { visible: true, timeout: 15000 });
+                await pagPrincipal.waitForSelector('button.custom-button.btn-primary', { visible: true, timeout: 30000 }); 
                 await pagPrincipal.evaluate(() => {
                     const btn = Array.from(document.querySelectorAll('button')).find(el => el.innerText.includes('Acessar'));
                     if(btn) btn.click();
                 });
                 
-                console.log(`⏳ ${pos} Aguardando nova aba abrir (10s)...`);
-                await new Promise(r => setTimeout(r, 10000)); 
+                console.log(`⏳ ${pos} Aguardando nova aba abrir (15s)...`);
+                await new Promise(r => setTimeout(r, 15000)); 
 
                 // --- Captura a nova aba ---
                 const allPages = await browser.pages();
@@ -293,17 +293,17 @@ async function processarFilaCompleta(pacientesPendentes) {
                 await pagConsulta.bringToFront(); 
                 
                 console.log(`✅ ${pos} Nova aba capturada! Buscando campo de Beneficiário...`);
-                await pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_tbBenef', { visible: true, timeout: 20000 });
+                await pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_tbBenef', { visible: true, timeout: 30000 }); 
 
                 // --- Inserção da carteirinha ---
                 console.log(`💳 ${pos} Inserindo a carteirinha do paciente: ${paciente.carteirinha}...`);
                 await pagConsulta.click('#ctl00_ContentPlaceHolder1_tbBenef');
                 await pagConsulta.keyboard.down('Control'); await pagConsulta.keyboard.press('A'); await pagConsulta.keyboard.up('Control'); await pagConsulta.keyboard.press('Backspace');
-                await pagConsulta.type('#ctl00_ContentPlaceHolder1_tbBenef', paciente.carteirinha, { delay: 100 }); 
+                await pagConsulta.type('#ctl00_ContentPlaceHolder1_tbBenef', paciente.carteirinha, { delay: 150 }); 
 
                 console.log(`⌨️ ${pos} Pressionando TAB para acionar o PostBack...`);
                 await pagConsulta.keyboard.press('Tab');
-                await new Promise(r => setTimeout(r, 7000)); 
+                await new Promise(r => setTimeout(r, 10000)); 
 
                 // --- Preenchimento de datas ---
                 console.log(`📅 ${pos} Preenchendo as datas de busca...`);
@@ -320,31 +320,31 @@ async function processarFilaCompleta(pacientesPendentes) {
                 const hoje = new Date();
                 const dataFinalFormatada = `${String(hoje.getDate()).padStart(2, '0')}${String(hoje.getMonth() + 1).padStart(2, '0')}${hoje.getFullYear()}`;
 
-                await pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_tbDataInicial', { visible: true, timeout: 15000 });
+                await pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_tbDataInicial', { visible: true, timeout: 30000 }); 
                 
                 await pagConsulta.click('#ctl00_ContentPlaceHolder1_tbDataInicial');
                 await pagConsulta.keyboard.press('Home');
                 for(let i=0; i<10; i++) await pagConsulta.keyboard.press('Delete');
                 await pagConsulta.type('#ctl00_ContentPlaceHolder1_tbDataInicial', dataInicialFormatada, { delay: 150 }); 
                 
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 2000));
                 
                 await pagConsulta.click('#ctl00_ContentPlaceHolder1_tbDataFinal');
                 await pagConsulta.keyboard.press('Home');
                 for(let i=0; i<10; i++) await pagConsulta.keyboard.press('Delete');
                 await pagConsulta.type('#ctl00_ContentPlaceHolder1_tbDataFinal', dataFinalFormatada, { delay: 150 }); 
 
-                await new Promise(r => setTimeout(r, 2000));
+                await new Promise(r => setTimeout(r, 3000));
 
                 console.log(`🚀 ${pos} Clicando no botão Consultar...`);
                 await pagConsulta.click('#ctl00_ContentPlaceHolder1_btnBuscar');
 
                 // --- Aguarda: tabela OU mensagem "não existem" ---
-                console.log(`⏳ ${pos} Aguardando resultado...`);
+                console.log(`⏳ ${pos} Aguardando a tabela de resultados aparecer...`);
                 
                 const resultado = await Promise.race([
-                    pagConsulta.waitForSelector('table[id*="gvAutorizacoes"]', { visible: true, timeout: 20000 }).then(() => 'tabela'),
-                    pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_lbGridVazio', { visible: true, timeout: 20000 }).then(() => 'vazio')
+                    pagConsulta.waitForSelector('table[id*="gvAutorizacoes"]', { visible: true, timeout: 40000 }).then(() => 'tabela'), 
+                    pagConsulta.waitForSelector('#ctl00_ContentPlaceHolder1_lbGridVazio', { visible: true, timeout: 40000 }).then(() => 'vazio')
                 ]).catch(() => 'timeout');
 
                 if (resultado === 'vazio') {
@@ -354,13 +354,13 @@ async function processarFilaCompleta(pacientesPendentes) {
                 }
 
                 if (resultado === 'timeout') {
-                    console.log(`⚠️ ${pos} Timeout na consulta. Próximo...`);
+                    console.log(`⚠️ ${pos} Timeout na consulta. O site demorou demais. Próximo...`);
                     resultados.push({ pac: paciente, printUrl: null });
                     continue;
                 }
 
                 // resultado === 'tabela' → Tem autorizações!
-                await new Promise(r => setTimeout(r, 3000));
+                await new Promise(r => setTimeout(r, 5000));
 
                 console.log(`🔍 ${pos} Procurando autorização com a data inicial: ${dataInicialComBarras}...`);
                 
@@ -388,8 +388,8 @@ async function processarFilaCompleta(pacientesPendentes) {
                     continue;
                 }
 
-                console.log(`📸 ${pos} Guia encontrada! Aguardando o Print final carregar (10 segundos)...`);
-                await new Promise(r => setTimeout(r, 10000)); 
+                console.log(`📸 ${pos} Guia encontrada! Aguardando o Print final carregar (15 segundos)...`);
+                await new Promise(r => setTimeout(r, 15000)); 
                 
                 const fileName = `print_unimed_${Date.now()}.png`;
                 const savePath = path.resolve(__dirname, 'public', 'prints', fileName);
@@ -443,7 +443,7 @@ async function processarFilaCompleta(pacientesPendentes) {
 // ==========================================
 async function processarFilaPendentes() {
     console.log('==================================================');
-    console.log('🕒 Iniciando verificação de fila (Banco VM) - ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
+    console.log('🕒 Iniciando verificação de fila (Banco VM - DEBIAN) - ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
 
     try {
         await pool.query(`
@@ -568,7 +568,7 @@ async function processarFilaPendentes() {
 // ==========================================
 // INICIALIZAÇÃO (DEBIAN / LINUX)
 // ==========================================
-console.log('🤖 Robô Iniciado (Versão Debian - Sessão Única).');
+console.log('🤖 Robô Iniciado (Versão Debian - Tempos Aumentados).');
 
 // Executa a primeira vez ao iniciar
 processarFilaPendentes();
