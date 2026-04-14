@@ -28,7 +28,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // 🆕 NOVO - Servir prints do robô Unimed como arquivos estáticos
 // Faz o link "Ver Print da Guia" no HTML funcionar (Ex: /prints/print_unimed_123456.png)
-app.use('/prints', express.static('/opt/robo-unimed/public/prints'));
+app.use('/prints', express.static('~/api-eco-teste/public/prints'));
 
 const CHAVE_MESTRA = process.env.CHAVE_MESTRA; // 🔒 Puxando do .env
 const rotasAbertas = ['/avaliar', '/webhook-review', '/registrar_ponto', '/webhook-ata']; 
