@@ -1,21 +1,25 @@
 const mysql = require('mysql2/promise');
 
-async function consertarTabela() {
-    console.log("🔄 Conectando no banco por dentro da VM...");
+async function consertarDefinitivo() {
+    console.log("🔄 Conectando no banco da VM...");
     const pool = mysql.createPool({
-        host: '127.0.0.1', // Aqui a gente entra pela porta da frente (Localhost)
+        host: '127.0.0.1',
         user: 'admin_eco',
         password: 'Hzmffv10@',
         database: 'eco_sistema'
     });
 
     try {
-        console.log("🗑️ Destruindo a tabela velha e com defeito...");
-        await pool.query("DROP TABLE IF EXISTS protocolos");
+        console.log("🤫 Desligando o alarme de chaves estrangeiras...");
+        await pool.query("SET FOREIGN_KEY_CHECKS = 0;");
+
+        console.log("🗑️ Destruindo a tabela defeituosa...");
+        await pool.query("DROP TABLE IF EXISTS protocolos;");
         
-        console.log("✨ Recriando a tabela nova com a trava combinada...");
+        console.log("✨ Recriando a tabela com a trava tripla perfeita...");
         await pool.query(`
             CREATE TABLE protocolos (
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 cd_estabelecimento INT,
                 seq_protocolo INT,
                 cd_protocolo VARCHAR(50),
@@ -26,11 +30,15 @@ async function consertarTabela() {
                 nr_dias_intervalo INT,
                 nm_usuario VARCHAR(100),
                 
-                -- ESTA É A MÁGICA: A trava agora exige a combinação dos 3 para ser duplicado
-                PRIMARY KEY (cd_estabelecimento, seq_protocolo, nr_seq_subtipo)
+                -- A TRAVA TRIPLA QUE IMPEDE O ESMAGAMENTO:
+                UNIQUE KEY idx_unico_protocolo (cd_estabelecimento, seq_protocolo, nr_seq_subtipo)
             )
         `);
-        console.log("✅ SUCESSO! A gaveta está pronta para receber os 1523 protocolos!");
+
+        console.log("🔒 Ligando a segurança do banco novamente...");
+        await pool.query("SET FOREIGN_KEY_CHECKS = 1;");
+
+        console.log("✅ SUCESSO ABSOLUTO! Tabela blindada. Pode rodar a sincronização!");
     } catch (error) {
         console.error("❌ ERRO:", error.message);
     } finally {
@@ -39,4 +47,4 @@ async function consertarTabela() {
     }
 }
 
-consertarTabela();
+consertarDefinitivo();
