@@ -268,12 +268,11 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
                 const nm_usuario = row.NM_USUARIO ?? row[8];
 
                 try {
+                    // NOVO CÓDIGO (INSERÇÃO BRUTA SEM FILTRO)
                     const [resMysql] = await pool.query(
                         `INSERT INTO protocolos 
                         (cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON DUPLICATE KEY UPDATE 
-                        cd_estabelecimento=VALUES(cd_estabelecimento), seq_protocolo=VALUES(seq_protocolo), cd_protocolo=VALUES(cd_protocolo), nm_protocolo=VALUES(nm_protocolo), nm_subtipo=VALUES(nm_subtipo), nr_ciclos=VALUES(nr_ciclos), nr_dias_intervalo=VALUES(nr_dias_intervalo), nm_usuario=VALUES(nm_usuario)`,
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                         [
                             cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, 
                             nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario
