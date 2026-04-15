@@ -224,6 +224,7 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
         connection = await oracledb.getConnection(dbConfigOracle);
         console.log("[1/4] Conectado ao Oracle com sucesso.");
         
+// 💡 CORREÇÃO: Buscando DIRETO DA VIEW tasy.protocolos_eco em vez das tabelas base!
         const oracleSql = `
             SELECT 
                 CD_ESTABELECIMENTO,
@@ -239,43 +240,59 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
         `;
         
         console.log("[2/4] Executando Query na View TASY.PROTOCOLOS_ECO...");
-        const resultOracle = await connection.execute(oracleSql);
+        
+        // 💡 MUDANÇA AQUI: Forçando o limite de linhas para 10.000 para o Oracle não cortar a lista
+        const resultOracle = await connection.execute(oracleSql, [], {
+            maxRows: 10000 
+        });
+        
         console.log(`[2/4] Query finalizada. Retornou ${resultOracle.rows ? resultOracle.rows.length : 0} linhas.`);
 
         let inserted = 0;
+        let updated = 0; // Adicionando contador de update para você auditar
+
         if (resultOracle.rows && resultOracle.rows.length > 0) {
             console.log("[3/4] Inserindo dados no MySQL...");
             for (let i = 0; i < resultOracle.rows.length; i++) {
                 let row = resultOracle.rows[i];
+                
+                // Normalização: Array (se outFormat padrão) ou Objeto
+                const cd_estabelecimento = row.CD_ESTABELECIMENTO ?? row[0];
+                const seq_protocolo = row.SEQ_PROTOCOLO ?? row[1];
+                const cd_protocolo = row.CD_PROTOCOLO ?? row[2];
+                const nr_seq_subtipo = row.NR_SEQ_SUBTIPO ?? row[3];
+                const nm_protocolo = row.NM_PROTOCOLO ?? row[4];
+                const nm_subtipo = row.NM_SUBTIPO ?? row[5];
+                const nr_ciclos = row.NR_CICLOS ?? row[6];
+                const nr_dias_intervalo = row.NR_DIAS_INTERVALO ?? row[7];
+                const nm_usuario = row.NM_USUARIO ?? row[8];
+
                 try {
-                    await pool.query(
+                    const [resMysql] = await pool.query(
                         `INSERT INTO protocolos 
                         (cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario) 
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON DUPLICATE KEY UPDATE 
                         cd_estabelecimento=VALUES(cd_estabelecimento), seq_protocolo=VALUES(seq_protocolo), cd_protocolo=VALUES(cd_protocolo), nm_protocolo=VALUES(nm_protocolo), nm_subtipo=VALUES(nm_subtipo), nr_ciclos=VALUES(nr_ciclos), nr_dias_intervalo=VALUES(nr_dias_intervalo), nm_usuario=VALUES(nm_usuario)`,
                         [
-                            row.CD_ESTABELECIMENTO, 
-                            row.SEQ_PROTOCOLO, 
-                            row.CD_PROTOCOLO, 
-                            row.NR_SEQ_SUBTIPO, 
-                            row.NM_PROTOCOLO, 
-                            row.NM_SUBTIPO, 
-                            row.NR_CICLOS, 
-                            row.NR_DIAS_INTERVALO, 
-                            row.NM_USUARIO
+                            cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, 
+                            nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario
                         ]
                     );
-                    inserted++;
+                    
+                    // Se o affectedRows for 1, ele inseriu. Se for 2, ele atualizou (sobrescreveu)
+                    if (resMysql.affectedRows === 1) inserted++;
+                    if (resMysql.affectedRows === 2) updated++;
+
                 } catch(mysqlErr) {
                     console.error(`❌ [MySQL] Falha ao inserir linha. Dados:`, row);
                     console.error(`Detalhe do erro MySQL:`, mysqlErr.message);
                     throw mysqlErr; 
                 }
             }
-            console.log(`[4/4] Inserção concluída! Processados: ${inserted}.`);
+            console.log(`[4/4] Inserção concluída! Inseridos novos: ${inserted}. Sobrescritos/Atualizados: ${updated}. Total lido: ${resultOracle.rows.length}`);
         }
-        res.json({ success: true, total: resultOracle.rows ? resultOracle.rows.length : 0, inserted });
+        res.json({ success: true, total: resultOracle.rows ? resultOracle.rows.length : 0, inserted, updated });
     } catch (err) {
         console.error("❌ ERRO FATAL NA SINCRONIZAÇÃO TASY:", err.message);
         res.status(500).json({ error: err.message });
