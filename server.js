@@ -224,7 +224,7 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
         connection = await oracledb.getConnection(dbConfigOracle);
         console.log("[1/4] Conectado ao Oracle com sucesso.");
         
-// 💡 CORREÇÃO: Buscando DIRETO DA VIEW tasy.protocolos_eco em vez das tabelas base!
+        // 💡 CORREÇÃO: Buscando DIRETO DA VIEW tasy.protocolos_eco em vez das tabelas base!
         const oracleSql = `
             SELECT 
                 CD_ESTABELECIMENTO,
@@ -246,11 +246,10 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
             maxRows: 10000 
         });
         
-        
         console.log(`[2/4] Query finalizada. Retornou ${resultOracle.rows ? resultOracle.rows.length : 0} linhas.`);
 
         let inserted = 0;
-        let updated = 0; // Adicionando contador de update para você auditar
+        let ignorados = 0; // Mudamos o nome para 'ignorados' para refletir os duplicados pulados
 
         if (resultOracle.rows && resultOracle.rows.length > 0) {
             console.log("[3/4] Inserindo dados no MySQL...");
@@ -269,9 +268,9 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
                 const nm_usuario = row.NM_USUARIO ?? row[8];
 
                 try {
-                    // NOVO CÓDIGO (INSERÇÃO BRUTA SEM FILTRO)
+                    // 💡 MUDANÇA AQUI: Usando INSERT IGNORE para não travar quando achar repetido
                     const [resMysql] = await pool.query(
-                        `INSERT INTO protocolos 
+                        `INSERT IGNORE INTO protocolos 
                         (cd_estabelecimento, seq_protocolo, cd_protocolo, nr_seq_subtipo, nm_protocolo, nm_subtipo, nr_ciclos, nr_dias_intervalo, nm_usuario) 
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                         [
@@ -280,19 +279,18 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
                         ]
                     );
                     
-                    // Se o affectedRows for 1, ele inseriu. Se for 2, ele atualizou (sobrescreveu)
+                    // Com INSERT IGNORE, affectedRows é 1 se inseriu novo, e 0 se pulou por ser duplicado
                     if (resMysql.affectedRows === 1) inserted++;
-                    if (resMysql.affectedRows === 2) updated++;
+                    else ignorados++;
 
                 } catch(mysqlErr) {
-                    console.error(`❌ [MySQL] Falha ao inserir linha. Dados:`, row);
-                    console.error(`Detalhe do erro MySQL:`, mysqlErr.message);
-                    throw mysqlErr; 
+                    console.error(`⚠️ [MySQL] Linha pulada. Motivo: ${mysqlErr.message}`);
+                    // 💡 REMOVIDO: O comando 'throw mysqlErr' foi tirado para NÃO DESTRUIR o loop!
                 }
             }
-            console.log(`[4/4] Inserção concluída! Inseridos novos: ${inserted}. Sobrescritos/Atualizados: ${updated}. Total lido: ${resultOracle.rows.length}`);
+            console.log(`[4/4] Concluído! Inseridos novos: ${inserted}. Duplicados ignorados: ${ignorados}. Total lido: ${resultOracle.rows.length}`);
         }
-        res.json({ success: true, total: resultOracle.rows ? resultOracle.rows.length : 0, inserted, updated });
+        res.json({ success: true, total: resultOracle.rows ? resultOracle.rows.length : 0, inserted, ignorados });
     } catch (err) {
         console.error("❌ ERRO FATAL NA SINCRONIZAÇÃO TASY:", err.message);
         res.status(500).json({ error: err.message });
