@@ -184,7 +184,7 @@ app.post('/protocolos/init-tables', async (req, res) => {
             cd_estabelecimento VARCHAR(50),
             seq_protocolo VARCHAR(50),
             cd_protocolo VARCHAR(255),
-            nr_seq_subtipo VARCHAR(50) UNIQUE,
+            nr_seq_subtipo VARCHAR(50),
             nm_protocolo VARCHAR(255),
             nm_subtipo VARCHAR(255),
             nr_ciclos VARCHAR(50), 
