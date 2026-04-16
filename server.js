@@ -244,29 +244,27 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
             maxRows: 10000 
         });
         
-        console.log(`[2/4] Query finalizada. Retornou ${resultOracle.rows ? resultOracle.rows.length : 0} linhas.`);
+        console.log(`[2/4] Query finalizada. Retornou ${resultOracle?.rows?.length || 0} linhas.`);
 
         let inserted = 0;
 
         if (resultOracle.rows && resultOracle.rows.length > 0) {
-            console.log("[3/4] Esvaziando a tabela antes de inserir os novos dados...");
-            // Opcional mas recomendado: Limpa a tabela antes de inserir para não duplicar infinitamente a cada vez que a sincronização roda.
-            // O truncate zera os IDs. Como você vai amarrar pelo ID, se quiser manter os IDs antigos, me avise para removermos isso e usarmos DELETE.
-            await pool.query("TRUNCATE TABLE protocolos;");
-
             console.log("[3/4] Inserindo dados no MySQL...");
             for (let i = 0; i < resultOracle.rows.length; i++) {
                 let row = resultOracle.rows[i];
                 
-                const cd_estabelecimento = row.CD_ESTABELECIMENTO ?? row[0];
-                const seq_protocolo = row.SEQ_PROTOCOLO ?? row[1];
-                const cd_protocolo = row.CD_PROTOCOLO ?? row[2];
-                const nr_seq_subtipo = row.NR_SEQ_SUBTIPO ?? row[3];
-                const nm_protocolo = row.NM_PROTOCOLO ?? row[4];
-                const nm_subtipo = row.NM_SUBTIPO ?? row[5];
-                const nr_ciclos = row.NR_CICLOS ?? row[6];
-                const nr_dias_intervalo = row.NR_DIAS_INTERVALO ?? row[7];
-                const nm_usuario = row.NM_USUARIO ?? row[8];
+                // 🛡️ BLINDAGEM MÁXIMA: Se a linha vier vazia do Oracle, pula para a próxima sem travar
+                if (!row) continue;
+                
+                const cd_estabelecimento = row.CD_ESTABELECIMENTO ?? row[0] ?? null;
+                const seq_protocolo = row.SEQ_PROTOCOLO ?? row[1] ?? null;
+                const cd_protocolo = row.CD_PROTOCOLO ?? row[2] ?? null;
+                const nr_seq_subtipo = row.NR_SEQ_SUBTIPO ?? row[3] ?? null;
+                const nm_protocolo = row.NM_PROTOCOLO ?? row[4] ?? null;
+                const nm_subtipo = row.NM_SUBTIPO ?? row[5] ?? null;
+                const nr_ciclos = row.NR_CICLOS ?? row[6] ?? null;
+                const nr_dias_intervalo = row.NR_DIAS_INTERVALO ?? row[7] ?? null;
+                const nm_usuario = row.NM_USUARIO ?? row[8] ?? null;
 
                 try {
                     // INSERÇÃO BRUTA: Cada linha gera um ID novo no MySQL.
@@ -282,9 +280,8 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
                     inserted++;
 
                 } catch(mysqlErr) {
-                    console.error(`❌ [MySQL] Falha ao inserir linha. Dados:`, row);
-                    console.error(`Detalhe do erro MySQL:`, mysqlErr.message);
-                    // Não vai travar o robô se uma linha der problema aleatório
+                    console.error(`⚠️ [MySQL] Falha silenciosa ao inserir linha ${i}. Erro:`, mysqlErr.message);
+                    // Erros individuais não travam mais a sincronização inteira
                 }
             }
             console.log(`[4/4] Inserção concluída! Total inserido: ${inserted}. Total lido: ${resultOracle.rows.length}`);
