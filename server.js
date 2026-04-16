@@ -243,9 +243,9 @@ app.get('/protocolos/sync-tasy', async (req, res) => {
         
         // 💡 MUDANÇA AQUI: Forçando o limite de linhas para 10.000 para o Oracle não cortar a lista
         const resultOracle = await connection.execute(oracleSql, [], {
-            maxRows: 10000 
         });
         
+
         console.log(`[2/4] Query finalizada. Retornou ${resultOracle.rows ? resultOracle.rows.length : 0} linhas.`);
 
         let inserted = 0;
