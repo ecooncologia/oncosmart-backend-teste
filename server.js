@@ -174,6 +174,61 @@ app.get('/custos_oracle', async (req, res) => {
 });
 
 // ============================================================================
+// 🚀 NOVA ROTA: CUSTO OPERAÇÃO VITA (ORACLE TASY)
+// ============================================================================
+app.get('/view_vita', async (req, res) => {
+    let connection;
+    try {
+        const mesFiltro = req.query.mes; // Formato esperado: '2026-04'
+
+        if (!mesFiltro) {
+            console.log("🛑 [Oracle] BLOQUEADO: Tentativa de buscar view_vita sem informar o mês.");
+            return res.status(400).json({ error: "Mês não informado (esperado: AAAA-MM)." });
+        }
+
+        connection = await oracledb.getConnection(dbConfigOracle);
+        
+        // A Query exata que você solicitou, filtrando pelo mês
+        const querySql = `
+            SELECT 
+                nm_pessoa_fisica, 
+                nr_prescricao, 
+                dt_atendimento, 
+                ds_material_conta, 
+                ds_material, 
+                qt_dose_cabine, 
+                custo_antigo, 
+                vl_custo_unitario_manip, 
+                vl_custo_total_manip 
+            FROM view_vita
+            WHERE TO_CHAR(dt_atendimento, 'YYYY-MM') = :mes
+        `;
+        
+        const result = await connection.execute(querySql, { mes: mesFiltro });
+        
+        console.log(`✅ [Oracle] view_vita consultada com sucesso. ${result.rows.length} registros (Mês: ${mesFiltro}).`);
+        res.json(result.rows);
+        
+    } catch (err) {
+        console.error("❌ [Oracle] Erro fatal na rota /view_vita:", err.message);
+        res.status(500).json({ error: "Erro ao buscar dados da view_vita: " + err.message });
+    } finally {
+        if (connection) {
+            try { await connection.close(); } catch (e) { console.error(e); }
+        }
+    }
+});
+
+// ============================================================================
+// 🚀 ROTA: CONTAS FATURADAS (VITA)
+// ============================================================================
+app.get('/contas_faturadas', async (req, res) => {
+    // Retornando array vazio por enquanto para a aba não dar erro.
+    // Assim que você tiver o SELECT dessa view, basta colocar a mesma estrutura do Oracle aqui!
+    res.json([]);
+});
+
+// ============================================================================
 // 🧬 MÓDULO DE PROTOCOLOS E TAGS (COM LOGS DETALHADOS PARA DEBUG)
 // ============================================================================
 
