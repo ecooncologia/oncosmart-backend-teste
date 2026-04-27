@@ -188,7 +188,7 @@ app.get('/view_vita', async (req, res) => {
 
         connection = await oracledb.getConnection(dbConfigOracle);
         
-        // A Query exata que você solicitou, filtrando pelo mês
+        // CORREÇÃO: Adicionado o prefixo TASY. antes do nome da view
         const querySql = `
             SELECT 
                 nm_pessoa_fisica, 
@@ -200,7 +200,7 @@ app.get('/view_vita', async (req, res) => {
                 custo_antigo, 
                 vl_custo_unitario_manip, 
                 vl_custo_total_manip 
-            FROM view_vita
+            FROM TASY.view_vita
             WHERE TO_CHAR(dt_atendimento, 'YYYY-MM') = :mes
         `;
         
@@ -217,15 +217,6 @@ app.get('/view_vita', async (req, res) => {
             try { await connection.close(); } catch (e) { console.error(e); }
         }
     }
-});
-
-// ============================================================================
-// 🚀 ROTA: CONTAS FATURADAS (VITA)
-// ============================================================================
-app.get('/contas_faturadas', async (req, res) => {
-    // Retornando array vazio por enquanto para a aba não dar erro.
-    // Assim que você tiver o SELECT dessa view, basta colocar a mesma estrutura do Oracle aqui!
-    res.json([]);
 });
 
 // ============================================================================
