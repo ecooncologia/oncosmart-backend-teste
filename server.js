@@ -199,7 +199,7 @@ app.get('/view_vita', async (req, res) => {
                 dose_real_custo, 
                 custo_antigo, 
                 vl_custo_unitario_manip, 
-                vl_custo_real_manip 
+                custo_total_antigo 
             FROM TASY.view_vita
         `;
         
