@@ -196,7 +196,7 @@ app.get('/view_vita', async (req, res) => {
                 dt_atendimento, 
                 ds_material_conta, 
                 ds_material, 
-                qt_dose_cabine, 
+                dose_real_custo, 
                 custo_antigo, 
                 vl_custo_unitario_manip, 
                 vl_custo_real_manip 
