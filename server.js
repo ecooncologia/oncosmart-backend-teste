@@ -201,10 +201,9 @@ app.get('/view_vita', async (req, res) => {
                 vl_custo_unitario_manip, 
                 vl_custo_total_manip 
             FROM TASY.view_vita
-            WHERE TO_CHAR(dt_atendimento, 'YYYY-MM') = :mes
         `;
         
-        const result = await connection.execute(querySql, { mes: mesFiltro });
+        const result = await connection.execute(querySql);
         
         console.log(`✅ [Oracle] view_vita consultada com sucesso. ${result.rows.length} registros (Mês: ${mesFiltro}).`);
         res.json(result.rows);
