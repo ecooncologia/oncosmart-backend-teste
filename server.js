@@ -199,7 +199,7 @@ app.get('/view_vita', async (req, res) => {
                 qt_dose_cabine, 
                 custo_antigo, 
                 vl_custo_unitario_manip, 
-                vl_custo_total_manip 
+                vl_custo_real_manip 
             FROM TASY.view_vita
         `;
         
@@ -207,6 +207,7 @@ app.get('/view_vita', async (req, res) => {
         
         console.log(`✅ [Oracle] view_vita consultada com sucesso. ${result.rows.length} registros (Mês: ${mesFiltro}).`);
         res.json(result.rows);
+        console.log()
         
     } catch (err) {
         console.error("❌ [Oracle] Erro fatal na rota /view_vita:", err.message);
