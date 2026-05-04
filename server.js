@@ -188,7 +188,6 @@ app.get('/view_vita', async (req, res) => {
 
         connection = await oracledb.getConnection(dbConfigOracle);
         
-        // CORREÇÃO: Adicionado o prefixo TASY. antes do nome da view
         const querySql = `
             SELECT 
                 nm_pessoa_fisica, 
@@ -207,7 +206,6 @@ app.get('/view_vita', async (req, res) => {
         
         console.log(`✅ [Oracle] view_vita consultada com sucesso. ${result.rows.length} registros (Mês: ${mesFiltro}).`);
         res.json(result.rows);
-        console.log()
         
     } catch (err) {
         console.error("❌ [Oracle] Erro fatal na rota /view_vita:", err.message);
@@ -227,6 +225,7 @@ app.get('/conta_paciente_eco', async (req, res) => {
     try {
         connection = await oracledb.getConnection(dbConfigOracle);
         
+        // 💡 REMOVIDO o "TASY.", buscando exatamente como você testou no banco.
         const querySql = `
             SELECT 
                 NM_PESSOA_FISICA,
@@ -234,7 +233,7 @@ app.get('/conta_paciente_eco', async (req, res) => {
                 NR_INTERNO_CONTA,
                 DT_ENTRADA,
                 VALOR_CONTA
-            FROM TASY.CONTA_PACIENTE_ECO
+            FROM CONTA_PACIENTE_ECO
         `;
         
         const result = await connection.execute(
