@@ -233,7 +233,7 @@ app.get('/conta_paciente_eco', async (req, res) => {
                 NR_INTERNO_CONTA,
                 DT_ENTRADA,
                 VALOR_CONTA
-            FROM CONTA_PACIENTE_ECO
+            FROM TASY.CONTA_PACIENTE_ECO
         `;
         
         const result = await connection.execute(
