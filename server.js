@@ -220,6 +220,46 @@ app.get('/view_vita', async (req, res) => {
 });
 
 // ============================================================================
+// 🚀 NOVA ROTA: RELATÓRIO DE CONTAS FATURADAS TASY (CONTA_PACIENTE_ECO)
+// ============================================================================
+app.get('/conta_paciente_eco', async (req, res) => {
+    let connection;
+    try {
+        connection = await oracledb.getConnection(dbConfigOracle);
+        
+        const querySql = `
+            SELECT 
+                NM_PESSOA_FISICA,
+                NR_ATENDIMENTO,
+                NR_INTERNO_CONTA,
+                DT_ENTRADA,
+                VALOR_CONTA
+            FROM CONTA_PACIENTE_ECO
+        `;
+        
+        const result = await connection.execute(
+            querySql,
+            [], // Sem parâmetros de bind (o filtro de datas ocorre no frontend)
+            { 
+                outFormat: oracledb.OUT_FORMAT_OBJECT,
+                fetchInfo: { "VALOR_CONTA": { type: oracledb.NUMBER } }
+            }
+        );
+        
+        console.log(`✅ [Oracle] conta_paciente_eco consultada com sucesso. ${result.rows.length} registros.`);
+        res.json(result.rows);
+        
+    } catch (err) {
+        console.error("❌ [Oracle] Erro fatal na rota /conta_paciente_eco:", err.message);
+        res.status(500).json({ error: "Erro ao buscar dados da CONTA_PACIENTE_ECO: " + err.message });
+    } finally {
+        if (connection) {
+            try { await connection.close(); } catch (e) { console.error(e); }
+        }
+    }
+});
+
+// ============================================================================
 // 🧬 MÓDULO DE PROTOCOLOS E TAGS (COM LOGS DETALHADOS PARA DEBUG)
 // ============================================================================
 
