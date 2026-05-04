@@ -223,11 +223,17 @@ app.get('/view_vita', async (req, res) => {
 app.get('/conta_paciente_eco', async (req, res) => {
     let connection;
     try {
+        const mesFiltro = req.query.mes; // Formato esperado: '2026-04'
+
+        if (!mesFiltro) {
+            console.log("🛑 [Oracle] BLOQUEADO: Tentativa de buscar view_vita sem informar o mês.");
+            return res.status(400).json({ error: "Mês não informado (esperado: AAAA-MM)." });
+        }
+
         connection = await oracledb.getConnection(dbConfigOracle);
         
-        // 💡 REMOVIDO o "TASY.", buscando exatamente como você testou no banco.
         const querySql = `
-            SELECT 
+            SELECT
                 NM_PESSOA_FISICA,
                 NR_ATENDIMENTO,
                 NR_INTERNO_CONTA,
@@ -236,14 +242,7 @@ app.get('/conta_paciente_eco', async (req, res) => {
             FROM TASY.CONTA_PACIENTE_ECO
         `;
         
-        const result = await connection.execute(
-            querySql,
-            [], // Sem parâmetros de bind (o filtro de datas ocorre no frontend)
-            { 
-                outFormat: oracledb.OUT_FORMAT_OBJECT,
-                fetchInfo: { "VALOR_CONTA": { type: oracledb.NUMBER } }
-            }
-        );
+        const result = await connection.execute(querySql);
         
         console.log(`✅ [Oracle] conta_paciente_eco consultada com sucesso. ${result.rows.length} registros.`);
         res.json(result.rows);
