@@ -224,11 +224,6 @@ app.get('/conta_paciente_eco', async (req, res) => {
     let connection;
     try {
 
-        if (!mesFiltro) {
-            console.log("🛑 [Oracle] BLOQUEADO: Tentativa de buscar view_vita sem informar o mês.");
-            return res.status(400).json({ error: "Mês não informado (esperado: AAAA-MM)." });
-        }
-
         connection = await oracledb.getConnection(dbConfigOracle);
         
         const querySql = `
