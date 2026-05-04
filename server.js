@@ -223,7 +223,6 @@ app.get('/view_vita', async (req, res) => {
 app.get('/conta_paciente_eco', async (req, res) => {
     let connection;
     try {
-        const mesFiltro = req.query.mes; // Formato esperado: '2026-04'
 
         if (!mesFiltro) {
             console.log("🛑 [Oracle] BLOQUEADO: Tentativa de buscar view_vita sem informar o mês.");
