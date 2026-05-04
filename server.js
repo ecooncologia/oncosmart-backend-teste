@@ -223,26 +223,30 @@ app.get('/view_vita', async (req, res) => {
 app.get('/conta_paciente_eco', async (req, res) => {
     let connection;
     try {
-        const mesFiltro = req.query.mes; // Formato esperado: '2026-04'
-
-        if (!mesFiltro) {
-            console.log("🛑 [Oracle] BLOQUEADO: Tentativa de buscar view_vita sem informar o mês.");
-            return res.status(400).json({ error: "Mês não informado (esperado: AAAA-MM)." });
-        }
-
+        // Removi a exigência do mesFiltro, pois o front não manda mais pela URL
+        // O filtro 15 a 15 ocorre no frontend agora.
+        
         connection = await oracledb.getConnection(dbConfigOracle);
         
+        // Removi o prefixo TASY. 
         const querySql = `
-            SELECT
+            SELECT 
                 NM_PESSOA_FISICA,
                 NR_ATENDIMENTO,
                 NR_INTERNO_CONTA,
                 DT_ENTRADA,
                 VALOR_CONTA
-            FROM TASY.CONTA_PACIENTE_ECO
+            FROM CONTA_PACIENTE_ECO
         `;
         
-        const result = await connection.execute(querySql);
+        const result = await connection.execute(
+            querySql,
+            [], // Sem bind variables
+            { 
+                outFormat: oracledb.OUT_FORMAT_OBJECT, // Para vir como JSON { coluna: valor }
+                fetchInfo: { "VALOR_CONTA": { type: oracledb.NUMBER } } // Para os centavos não quebrarem a soma
+            }
+        );
         
         console.log(`✅ [Oracle] conta_paciente_eco consultada com sucesso. ${result.rows.length} registros.`);
         res.json(result.rows);
