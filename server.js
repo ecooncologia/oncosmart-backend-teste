@@ -188,6 +188,7 @@ app.get('/view_vita', async (req, res) => {
 
         connection = await oracledb.getConnection(dbConfigOracle);
         
+        // CORREÇÃO: Adicionado o prefixo TASY. antes do nome da view
         const querySql = `
             SELECT 
                 nm_pessoa_fisica, 
@@ -206,38 +207,11 @@ app.get('/view_vita', async (req, res) => {
         
         console.log(`✅ [Oracle] view_vita consultada com sucesso. ${result.rows.length} registros (Mês: ${mesFiltro}).`);
         res.json(result.rows);
+        console.log()
         
     } catch (err) {
         console.error("❌ [Oracle] Erro fatal na rota /view_vita:", err.message);
         res.status(500).json({ error: "Erro ao buscar dados da view_vita: " + err.message });
-    } finally {
-        if (connection) {
-            try { await connection.close(); } catch (e) { console.error(e); }
-        }
-    }
-});
-
-// ============================================================================
-// 🚀 NOVA ROTA: RELATÓRIO DE CONTAS FATURADAS TASY (CONTA_PACIENTE_ECO)
-// ============================================================================
-app.get('/conta_paciente_eco', async (req, res) => {
-    let connection;
-    try {
-
-        connection = await oracledb.getConnection(dbConfigOracle);
-        
-        const querySql = `
-            SELECT * FROM TASY.CONTA_PACIENTE_ECO
-        `;
-        
-        const result = await connection.execute(querySql);
-        
-        console.log(`✅ [Oracle] conta_paciente_eco consultada com sucesso. ${result.rows.length} registros.`);
-        res.json(result.rows);
-        
-    } catch (err) {
-        console.error("❌ [Oracle] Erro fatal na rota /conta_paciente_eco:", err.message);
-        res.status(500).json({ error: "Erro ao buscar dados da CONTA_PACIENTE_ECO: " + err.message });
     } finally {
         if (connection) {
             try { await connection.close(); } catch (e) { console.error(e); }
@@ -682,14 +656,17 @@ app.post('/fluxo-unimed/notificar', async (req, res) => {
                 `
             };
 
-            // Anexa print se existir (quando o robô já encontrou a guia)
+            // ✅ CORRIGIDO: Anexa print se existir usando __dirname
             if (pacienteDados.print_url) {
-                const printPath = path.join('/opt/robo-unimed/public', pacienteDados.print_url);
+                const printPath = path.join(__dirname, 'public', pacienteDados.print_url);
                 if (fs.existsSync(printPath)) {
                     mailNicolas.attachments = [{
                         filename: `Guia_${pacienteNome.replace(/\s+/g, '_')}.png`,
                         path: printPath
                     }];
+                    console.log(`📎 [FLUXO UNIMED] Print anexado ao e-mail: ${printPath}`);
+                } else {
+                    console.log(`⚠️ [FLUXO UNIMED] Print não encontrado em: ${printPath}`);
                 }
             }
 
@@ -732,9 +709,9 @@ app.post('/fluxo-unimed/notificar', async (req, res) => {
                 `
             };
 
-            // ✅ ANEXA O PRINT DA GUIA SE EXISTIR
+            // ✅ CORRIGIDO: Anexa print se existir usando __dirname
             if (pacienteDados.print_url) {
-                const printPath = path.join('/opt/robo-unimed/public', pacienteDados.print_url);
+                const printPath = path.join(__dirname, 'public', pacienteDados.print_url);
                 if (fs.existsSync(printPath)) {
                     mailAutorizacao.attachments = [{
                         filename: `Guia_Autorizada_${pacienteNome.replace(/\s+/g, '_')}.png`,
@@ -756,6 +733,62 @@ app.post('/fluxo-unimed/notificar', async (req, res) => {
     } catch (error) {
         console.error('❌ [FLUXO UNIMED] Erro na rota /fluxo-unimed/notificar:', error.message);
         return res.status(500).json({ erro: 'Erro interno ao processar notificação.' });
+    }
+});
+
+// ============================================================================
+// 💊 ROTA DA FARMÁCIA (NOTIFICAR ENFERMAGEM SOBRE ESTOQUE)
+// ============================================================================
+app.post('/fluxo-unimed/farmacia', async (req, res) => {
+    try {
+        const { pacienteNome, protocolo, statusEstoque, pacienteDados } = req.body;
+
+        if (!pacienteNome || !statusEstoque) {
+            return res.status(400).json({ erro: 'Dados incompletos para notificação da farmácia.' });
+        }
+
+        const temEstoque = statusEstoque === 'em_estoque';
+        const corDestaque = temEstoque ? '#059669' : '#dc2626';
+        const tituloEstoque = temEstoque ? '✅ Medicamento em Estoque' : '⚠️ Medicamento em Falta';
+        const textoEstoque = temEstoque 
+            ? `A farmácia confirmou que <strong>possui em estoque</strong> o medicamento para o tratamento abaixo.` 
+            : `A farmácia informou que <strong>NÃO possui em estoque</strong> o medicamento para o tratamento abaixo. É necessário providenciar a compra/solicitação.`;
+
+        let dataFormatadaBR = pacienteDados.data_solicitacao || '-';
+        if (dataFormatadaBR.includes('-')) {
+            dataFormatadaBR = dataFormatadaBR.split('-').reverse().join('/');
+        }
+
+        const mailEnfermagem = {
+            from: `"Farmácia ONCO SMART" <${process.env.EMAIL_USER}>`,
+            to: 'enfermagem@ecooncologia.com.br', // 💡 Altere para o e-mail real da enfermagem
+            subject: `${temEstoque ? '🟢 ESTOQUE OK' : '🔴 FALTA ESTOQUE'}: Paciente ${pacienteNome}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; max-width: 600px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 25px; margin: 0 auto;">
+                    <h2 style="color: ${corDestaque}; margin-top: 0;">${tituloEstoque}</h2>
+                    <p>${textoEstoque}</p>
+                    
+                    <table style="border-collapse:collapse; margin:20px 0; width:100%;">
+                        <tr style="background:#f9fafb;"><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Paciente</td><td style="padding:8px 12px; border:1px solid #eee; font-weight:bold; color:#0284c7;">${pacienteNome}</td></tr>
+                        <tr><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Protocolo</td><td style="padding:8px 12px; border:1px solid #eee; font-weight:bold;">${protocolo || '-'}</td></tr>
+                        <tr style="background:#f9fafb;"><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Diagnóstico</td><td style="padding:8px 12px; border:1px solid #eee;">${pacienteDados.diagnostico || '-'}</td></tr>
+                        <tr><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Data Solicitação</td><td style="padding:8px 12px; border:1px solid #eee;">${dataFormatadaBR}</td></tr>
+                    </table>
+                    
+                    <hr style="border: 0; border-top: 1px solid #eee; margin-top: 20px;">
+                    <p style="font-size: 12px; color: #777;"><em>Sistema ONCO SMART - Módulo Farmácia</em></p>
+                </div>
+            `
+        };
+
+        await transporter.sendMail(mailEnfermagem);
+        console.log(`📧 [FARMÁCIA] E-mail de estoque (${statusEstoque}) enviado para a enfermagem - Paciente: ${pacienteNome}`);
+        
+        return res.json({ sucesso: true, mensagem: 'Enfermagem notificada com sucesso.' });
+
+    } catch (error) {
+        console.error('❌ [FARMÁCIA] Erro na rota /fluxo-unimed/farmacia:', error.message);
+        return res.status(500).json({ erro: 'Erro interno ao processar notificação da farmácia.' });
     }
 });
 
@@ -951,14 +984,58 @@ async function handleSave(req, res, next) {
         }
         else if (tabelaSQL === 'helpdesk_tickets') {
             if (!id && req.method === 'POST') avisarTeams(dados); 
+            
             if (id) {
                 const [currentRows] = await pool.query('SELECT status FROM helpdesk_tickets WHERE id_firebase = ?', [id]);
                 const statusAntigo = currentRows.length > 0 ? currentRows[0].status : null;
+                
+                // 1. E-MAIL QUANDO O CHAMADO É FINALIZADO (Agora com a solução)
                 if (dados.status === 'finalizado' && statusAntigo !== 'finalizado') {
-                    try { await transporter.sendMail({ from: '"Suporte TI - ONCO SMART" <suporte.ecooncologia@gmail.com>', to: dados.uid, subject: `✅ Chamado Encerrado: #${dados.ticket_id || '0000'} - ${dados.assunto}`, html: `<p>Resolvido.</p>` }); } catch(emailErr) {}
+                    try { 
+                        await transporter.sendMail({ 
+                            from: '"Suporte TI - ONCO SMART" <suporte.ecooncologia@gmail.com>', 
+                            to: dados.uid, 
+                            subject: `✅ Chamado Encerrado: #${dados.ticket_id || '0000'} - ${dados.assunto}`, 
+                            html: `
+                            <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+                                <h2 style="color: #059669;">✅ Chamado Finalizado</h2>
+                                <p>Olá, o seu chamado <strong>${dados.assunto}</strong> foi concluído pelo suporte.</p>
+                                <div style="background: #f0fdf4; padding: 15px; border-left: 4px solid #059669; margin: 15px 0;">
+                                    <strong>Solução do Técnico:</strong><br>
+                                    ${dados.solution || 'Nenhuma solução detalhada foi informada.'}
+                                </div>
+                                <p>Por favor, acesse o sistema ONCO SMART na aba "Meus Chamados" para <strong>avaliar o atendimento</strong>.</p>
+                            </div>`
+                        }); 
+                    } catch(emailErr) { console.error("Erro e-mail finalizado:", emailErr); }
                 }
+
+                // Verifica se o chamado foi reaberto
                 if (statusAntigo === 'finalizado' && dados.status === 'pendente') avisarTeams(dados, true); 
+
+                // 2. E-MAIL QUANDO UMA NOVA NOTA/RESPOSTA É ENVIADA
+                if (dados.nova_nota) {
+                    try {
+                        await transporter.sendMail({
+                            from: '"Suporte TI - ONCO SMART" <suporte.ecooncologia@gmail.com>',
+                            to: dados.uid,
+                            subject: `🔔 Nova Mensagem no Chamado: #${dados.ticket_id || '0000'} - ${dados.assunto}`,
+                            html: `
+                            <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+                                <h2 style="color: #3b82f6;">Nova Resposta do Suporte</h2>
+                                <p>O seu chamado <strong>${dados.assunto}</strong> recebeu uma nova atualização:</p>
+                                <div style="background: #f8fafc; padding: 15px; border-left: 4px solid #3b82f6; margin: 15px 0;">
+                                    ${dados.nova_nota.replace(/\n/g, '<br>')}
+                                </div>
+                                <p>Acesse o sistema ONCO SMART para responder ou visualizar anexos, caso existam.</p>
+                            </div>`
+                        });
+                    } catch(emailErr) { console.error("Erro e-mail nota:", emailErr); }
+                    
+                    delete dados.nova_nota; // Remove essa propriedade para não salvá-la permanentemente no banco
+                }
             }
+            
             await pool.query(`INSERT INTO helpdesk_tickets (id_firebase, uid, user, setor, categoria, assunto, desc_texto, status, sla, data_abertura, rate, solution, elapsedTime, lastResumeTime, closedAt, dados_extras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE uid=VALUES(uid), user=VALUES(user), setor=VALUES(setor), categoria=VALUES(categoria), assunto=VALUES(assunto), desc_texto=VALUES(desc_texto), status=VALUES(status), sla=VALUES(sla), data_abertura=VALUES(data_abertura), rate=VALUES(rate), solution=VALUES(solution), elapsedTime=VALUES(elapsedTime), lastResumeTime=VALUES(lastResumeTime), closedAt=VALUES(closedAt), dados_extras = JSON_MERGE_PATCH(COALESCE(dados_extras, '{}'), ?)`, [finalId, dados.uid || null, dados.user || null, dados.setor || null, dados.categoria || null, dados.assunto || null, dados.desc || null, dados.status || 'pendente', dados.sla || null, limparData(dados.date), dados.rate || null, dados.solution || null, dados.elapsedTime || 0, dados.lastResumeTime || null, dados.closedAt || null, JSON.stringify(dados), JSON.stringify(dados)]);
         }
         else if (tabela === 'orcamentos') { 

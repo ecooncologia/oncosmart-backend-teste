@@ -18,6 +18,7 @@ downloads_unimed/
 *.sql
 *.tgz
 cloudflared-linux-amd64
+core
 
 # Plugins e Imagens de Erro do Robô
 plugin.zip
