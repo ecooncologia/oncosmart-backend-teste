@@ -793,6 +793,45 @@ app.post('/fluxo-unimed/farmacia', async (req, res) => {
 });
 
 // ============================================================================
+// 💰 NOVA ROTA: DISPARO DE COBRANÇA DA CAIXINHA
+// ============================================================================
+app.post('/caixinha/cobrar', async (req, res) => {
+    try {
+        const { colaboradorNome, colaboradorEmail, mesReferencia, valor } = req.body;
+
+        if (!colaboradorNome || !colaboradorEmail || !mesReferencia) {
+            return res.status(400).json({ sucesso: false, erro: 'Dados incompletos para cobrança.' });
+        }
+
+        const mailCobranca = {
+            from: `"Caixinha ECO" <${process.env.EMAIL_USER}>`,
+            to: colaboradorEmail,
+            subject: `Aviso de Pagamento Pendente - Caixinha ECO (${mesReferencia})`,
+            html: `
+                <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; max-width: 600px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 25px; margin: 0 auto;">
+                    <h2 style="color: #f59e0b; margin-top: 0;">⚠️ Pagamento Pendente</h2>
+                    <p>Olá <strong>${colaboradorNome}</strong>,</p>
+                    <p>Notamos que o pagamento da Caixinha ECO referente ao mês de <strong>${mesReferencia}</strong> ainda consta como pendente em nosso sistema.</p>
+                    <p><strong>Valor:</strong> ${valor || 'R$ 10,00'}</p>
+                    <p>Por favor, regularize o valor com a responsável pela caixinha assim que possível para continuarmos celebrando os aniversários da equipe!</p>
+                    <hr style="border: 0; border-top: 1px solid #eee; margin-top: 20px;">
+                    <p style="font-size: 12px; color: #777;"><em>Mensagem automática do sistema ONCO SMART</em></p>
+                </div>
+            `
+        };
+
+        await transporter.sendMail(mailCobranca);
+        console.log(`📧 [CAIXINHA] E-mail de cobrança enviado para ${colaboradorNome} (${colaboradorEmail}) - Ref: ${mesReferencia}`);
+        
+        return res.json({ sucesso: true, mensagem: 'Cobrança enviada com sucesso.' });
+
+    } catch (error) {
+        console.error('❌ [CAIXINHA] Erro na rota /caixinha/cobrar:', error.message);
+        return res.status(500).json({ sucesso: false, erro: 'Erro interno ao processar a cobrança.' });
+    }
+});
+
+// ============================================================================
 // --- ROTA DE LEITURA (GET) ---
 // ============================================================================
 app.get('/:tabela', async (req, res, next) => {
