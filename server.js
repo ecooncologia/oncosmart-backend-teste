@@ -1219,7 +1219,6 @@ async function monitorarNovosProcedimentos() {
                 }
             } catch(e) {
                 // Se a tabela system_configs não existir ainda ou der erro, ignoramos silenciosamente
-                // Ela será criada logo abaixo no Catch principal ou no handleSave global do sistema
             }
         }
 
@@ -1272,7 +1271,6 @@ async function monitorarNovosProcedimentos() {
                 let dt_atualizacao = row.DT_ATUALIZACAO ?? row.dt_atualizacao ?? '-';
                 const medico = row.MEDICO ?? row.medico ?? '-';
 
-                // Tratamento se a data voltar como objeto Date do Oracle
                 if (dt_atualizacao instanceof Date) {
                     dt_atualizacao = dt_atualizacao.toLocaleString("pt-BR", {timeZone: "America/Sao_Paulo"});
                 }
@@ -1302,10 +1300,7 @@ async function monitorarNovosProcedimentos() {
                 await transporter.sendMail(mailOptions);
                 console.log(`📧 [Monitor Procedimentos] E-mail enviado p/ Andreia - ${pessoa} (Seq: ${nr_sequencia})`);
 
-                // Atualiza em memória
                 lastProcedimentoSequencia = nr_sequencia;
-                
-                // Grava no banco MySQL para persistência
                 try {
                     await pool.query("UPDATE system_configs SET dados_extras = ? WHERE id_firebase = 'last_seq_procedimentos_eco'", [JSON.stringify({ lastSeq: lastProcedimentoSequencia })]);
                 } catch(e) { console.error("Erro ao salvar checkpoint no MySQL:", e); }
@@ -1326,6 +1321,120 @@ setTimeout(() => {
     // Depois, repete a verificação a cada 3 minutos
     setInterval(monitorarNovosProcedimentos, 3 * 60 * 1000);
 }, 10000);
+
+// ============================================================================
+// 🔄 ROTINA DIÁRIA: RESUMO DE PRESCRIÇÕES (TASY)
+// ============================================================================
+async function enviarResumoPrescricoes() {
+    let connection;
+    try {
+        connection = await oracledb.getConnection(dbConfigOracle);
+        
+        // ⚠️ ATENÇÃO: COMO MUDAR DE MODO TESTE PARA OFICIAL ⚠️
+        // PARA TESTAR AGORA: Deixe "TRUNC(SYSDATE)" (Busca as prescrições criadas HOJE).
+        // PARA PRODUÇÃO (06:00 da manhã): Mude para "TRUNC(SYSDATE - 1)" (Busca as de ONTEM).
+        const querySql = `
+            SELECT 
+                nm_paciente, 
+                desc_prot, 
+                convenio, 
+                desc_medicacao, 
+                nome_medico, 
+                dt_protocolo
+            FROM tasy.prescricoesnovas
+            WHERE TRUNC(dt_protocolo) = TRUNC(SYSDATE) 
+            ORDER BY dt_protocolo ASC
+        `;
+
+        const result = await connection.execute(querySql);
+
+        if (result.rows && result.rows.length > 0) {
+            let linhasTabela = '';
+            
+            for (let row of result.rows) {
+                const nm_paciente = row.NM_PACIENTE ?? row.nm_paciente ?? '-';
+                const desc_prot = row.DESC_PROT ?? row.desc_prot ?? '-';
+                const convenio = row.CONVENIO ?? row.convenio ?? '-';
+                const desc_medicacao = row.DESC_MEDICACAO ?? row.desc_medicacao ?? '-';
+                const nome_medico = row.NOME_MEDICO ?? row.nome_medico ?? '-';
+                let dt_protocolo = row.DT_PROTOCOLO ?? row.dt_protocolo ?? '-';
+
+                if (dt_protocolo instanceof Date) {
+                    dt_protocolo = dt_protocolo.toLocaleString("pt-BR", {timeZone: "America/Sao_Paulo"});
+                }
+
+                linhasTabela += `
+                    <tr>
+                        <td style="padding:8px; border:1px solid #eee; font-size:12px;">${nm_paciente}</td>
+                        <td style="padding:8px; border:1px solid #eee; font-size:12px;">${desc_prot}</td>
+                        <td style="padding:8px; border:1px solid #eee; font-size:12px;">${convenio}</td>
+                        <td style="padding:8px; border:1px solid #eee; font-size:12px;">${desc_medicacao}</td>
+                        <td style="padding:8px; border:1px solid #eee; font-size:12px;">${nome_medico}</td>
+                        <td style="padding:8px; border:1px solid #eee; font-size:12px;">${dt_protocolo}</td>
+                    </tr>
+                `;
+            }
+
+            const mailOptions = {
+                from: '"ONCO SMART" <' + process.env.EMAIL_USER + '>',
+                to: 'nicolas.araujo@ecooncologia.com.br',
+                subject: `📊 Resumo Diário de Prescrições (${result.rows.length} encontradas)`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; max-width: 800px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 25px; margin: 0 auto;">
+                        <h2 style="color: #04A03D; margin-top: 0;">📋 Relatório de Prescrições</h2>
+                        <p>Segue o resumo das novas prescrições registradas no sistema Tasy.</p>
+                        <table style="border-collapse:collapse; margin:20px 0; width:100%; text-align: left;">
+                            <thead>
+                                <tr style="background:#f9fafb; color:#6b7280;">
+                                    <th style="padding:8px; border:1px solid #eee; font-size:13px;">Paciente</th>
+                                    <th style="padding:8px; border:1px solid #eee; font-size:13px;">Protocolo</th>
+                                    <th style="padding:8px; border:1px solid #eee; font-size:13px;">Convênio</th>
+                                    <th style="padding:8px; border:1px solid #eee; font-size:13px;">Medicação</th>
+                                    <th style="padding:8px; border:1px solid #eee; font-size:13px;">Médico</th>
+                                    <th style="padding:8px; border:1px solid #eee; font-size:13px;">Data</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${linhasTabela}
+                            </tbody>
+                        </table>
+                        <hr style="border: 0; border-top: 1px solid #eee; margin-top: 20px;">
+                        <p style="font-size: 12px; color: #777;"><em>Gerado automaticamente pelo robô ONCO SMART</em></p>
+                    </div>
+                `
+            };
+
+            await transporter.sendMail(mailOptions);
+            console.log(`📧 [Resumo Prescrições] E-mail enviado p/ Nicolas com ${result.rows.length} registros.`);
+        } else {
+            console.log(`ℹ️ [Resumo Prescrições] Nenhuma prescrição encontrada para a data filtrada.`);
+        }
+    } catch (err) {
+        console.error("❌ [Resumo Prescrições] Erro ao buscar prescrições:", err.message);
+    } finally {
+        if (connection) {
+            try { await connection.close(); } catch (e) { console.error(e); }
+        }
+    }
+}
+
+// ⏳ Disparo para Teste Imediato (Roda 15 segundos após ligar o servidor)
+setTimeout(() => {
+    console.log("🚀 [Resumo Prescrições] Rodando disparo inicial de teste...");
+    enviarResumoPrescricoes();
+}, 15000);
+
+// ⏰ Relógio Oficial: Verifica a cada 60 segundos se é 06:00 da manhã
+setInterval(() => {
+    const agora = new Date();
+    const horaSP = new Date(agora.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+    
+    // Dispara apenas quando for exatamente 06:00
+    if (horaSP.getHours() === 6 && horaSP.getMinutes() === 0) {
+        console.log("⏰ [Resumo Prescrições] Relógio marcou 06:00! Iniciando extração diária...");
+        enviarResumoPrescricoes();
+    }
+}, 60000); 
 
 // ============================================================================
 // 🔄 ROTINA AUTOMÁTICA DE VIRADA DE MÊS (RANKING)
