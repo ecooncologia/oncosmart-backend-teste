@@ -1342,7 +1342,7 @@ async function enviarResumoPrescricoes() {
                 nome_medico, 
                 dt_protocolo
             FROM tasy.prescricoesnovas
-            WHERE TRUNC(dt_protocolo) = TRUNC(SYSDATE) 
+            WHERE TRUNC(dt_protocolo) = TRUNC(SYSDATE - 1) 
             ORDER BY dt_protocolo ASC
         `;
 
