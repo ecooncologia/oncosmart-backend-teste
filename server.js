@@ -813,6 +813,7 @@ app.post('/caixinha/cobrar', async (req, res) => {
                     <p>Olá <strong>${colaboradorNome}</strong>,</p>
                     <p>Notamos que o pagamento da Caixinha ECO referente ao mês de <strong>${mesReferencia}</strong> ainda consta como pendente em nosso sistema.</p>
                     <p><strong>Valor:</strong> ${valor || 'R$ 10,00'}</p>
+                    <p><strong>PIX:</strong> 41 98457-0126</p>
                     <p>Por favor, regularize o valor com a responsável pela caixinha assim que possível para continuarmos celebrando os aniversários da equipe!</p>
                     <hr style="border: 0; border-top: 1px solid #eee; margin-top: 20px;">
                     <p style="font-size: 12px; color: #777;"><em>Mensagem automática do sistema ONCO SMART</em></p>
@@ -1198,6 +1199,133 @@ app.delete('/:tabela/:id', async (req, res) => {
     } 
     catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ============================================================================
+// 🔄 ROTINA AUTOMÁTICA: MONITOR DE PROCEDIMENTOS AUTORIZADOS (TASY)
+// ============================================================================
+let lastProcedimentoSequencia = 0;
+
+async function monitorarNovosProcedimentos() {
+    let connection;
+    try {
+        // 1. Puxa do MySQL se for a primeira vez que o worker roda na memória
+        if (lastProcedimentoSequencia === 0) {
+            try {
+                const [rowsConfig] = await pool.query("SELECT dados_extras FROM system_configs WHERE id_firebase = 'last_seq_procedimentos_eco'");
+                if (rowsConfig.length > 0) {
+                    const config = JSON.parse(rowsConfig[0].dados_extras);
+                    lastProcedimentoSequencia = config.lastSeq || 0;
+                    console.log(`[Monitor Procedimentos] Restabelecido do MySQL. Última sequência: ${lastProcedimentoSequencia}`);
+                }
+            } catch(e) {
+                // Se a tabela system_configs não existir ainda ou der erro, ignoramos silenciosamente
+                // Ela será criada logo abaixo no Catch principal ou no handleSave global do sistema
+            }
+        }
+
+        connection = await oracledb.getConnection(dbConfigOracle);
+
+        // 2. Se continua 0, significa que não tem nada no MySQL. Vamos pegar o MAX do Oracle e salvar no MySQL.
+        if (lastProcedimentoSequencia === 0) {
+            const resultMax = await connection.execute(`SELECT NVL(MAX(nr_sequencia), 0) AS MAX_SEQ FROM tasy.procedimentos_autorizados_eco`);
+            if (resultMax.rows && resultMax.rows.length > 0) {
+                lastProcedimentoSequencia = resultMax.rows[0].MAX_SEQ || resultMax.rows[0][0] || 0;
+                console.log(`[Monitor Procedimentos] Inicializado pelo Oracle. Última sequência: ${lastProcedimentoSequencia}`);
+                
+                // Salva o checkpoint inicial no MySQL
+                try {
+                    await pool.query(`INSERT INTO system_configs (id_firebase, dados_extras) VALUES ('last_seq_procedimentos_eco', ?) ON DUPLICATE KEY UPDATE dados_extras=VALUES(dados_extras)`, [JSON.stringify({ lastSeq: lastProcedimentoSequencia })]);
+                } catch (err) {
+                    if (err.code === 'ER_NO_SUCH_TABLE') {
+                        await pool.query(`CREATE TABLE system_configs (id INT AUTO_INCREMENT PRIMARY KEY, id_firebase VARCHAR(100) UNIQUE, dados_extras JSON)`);
+                        await pool.query(`INSERT INTO system_configs (id_firebase, dados_extras) VALUES ('last_seq_procedimentos_eco', ?)`, [JSON.stringify({ lastSeq: lastProcedimentoSequencia })]);
+                    }
+                }
+            }
+            return; 
+        }
+
+        // 3. Busca novos registros maiores que o lastProcedimentoSequencia
+        const querySql = `
+            SELECT 
+                nr_sequencia, 
+                procedimento, 
+                pessoa, 
+                cd_procedimento, 
+                nr_atendimento, 
+                dt_atualizacao, 
+                medico 
+            FROM tasy.procedimentos_autorizados_eco
+            WHERE nr_sequencia > :lastSeq
+            ORDER BY nr_sequencia ASC
+        `;
+
+        const result = await connection.execute(querySql, { lastSeq: lastProcedimentoSequencia });
+
+        if (result.rows && result.rows.length > 0) {
+            for (let row of result.rows) {
+                const nr_sequencia = row.NR_SEQUENCIA ?? row.nr_sequencia;
+                const procedimento = row.PROCEDIMENTO ?? row.procedimento ?? '-';
+                const pessoa = row.PESSOA ?? row.pessoa ?? '-';
+                const cd_procedimento = row.CD_PROCEDIMENTO ?? row.cd_procedimento ?? '-';
+                const nr_atendimento = row.NR_ATENDIMENTO ?? row.nr_atendimento ?? '-';
+                let dt_atualizacao = row.DT_ATUALIZACAO ?? row.dt_atualizacao ?? '-';
+                const medico = row.MEDICO ?? row.medico ?? '-';
+
+                // Tratamento se a data voltar como objeto Date do Oracle
+                if (dt_atualizacao instanceof Date) {
+                    dt_atualizacao = dt_atualizacao.toLocaleString("pt-BR", {timeZone: "America/Sao_Paulo"});
+                }
+
+                const mailOptions = {
+                    from: '"ONCO SMART" <' + process.env.EMAIL_USER + '>',
+                    to: 'andreia.paula@ecooncologia.com.br',
+                    subject: `🔔 Novo Procedimento Autorizado: ${pessoa}`,
+                    html: `
+                        <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; max-width: 600px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 25px; margin: 0 auto;">
+                            <h2 style="color: #04A03D; margin-top: 0;">✅ Novo Procedimento Autorizado</h2>
+                            <p>Foi identificado um novo procedimento autorizado no sistema Tasy.</p>
+                            <table style="border-collapse:collapse; margin:20px 0; width:100%;">
+                                <tr style="background:#f9fafb;"><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Seq. Atualização</td><td style="padding:8px 12px; border:1px solid #eee;">${nr_sequencia}</td></tr>
+                                <tr><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Paciente</td><td style="padding:8px 12px; border:1px solid #eee; font-weight:bold; color:#0284c7;">${pessoa}</td></tr>
+                                <tr style="background:#f9fafb;"><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Procedimento</td><td style="padding:8px 12px; border:1px solid #eee;">${procedimento} (Cód: ${cd_procedimento})</td></tr>
+                                <tr><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Atendimento</td><td style="padding:8px 12px; border:1px solid #eee;">${nr_atendimento}</td></tr>
+                                <tr style="background:#f9fafb;"><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Médico</td><td style="padding:8px 12px; border:1px solid #eee;">${medico}</td></tr>
+                                <tr><td style="padding:8px 12px; font-weight:bold; color:#6b7280; border:1px solid #eee;">Data/Hora</td><td style="padding:8px 12px; border:1px solid #eee;">${dt_atualizacao}</td></tr>
+                            </table>
+                            <hr style="border: 0; border-top: 1px solid #eee; margin-top: 20px;">
+                            <p style="font-size: 12px; color: #777;"><em>Robô de Varredura - ONCO SMART</em></p>
+                        </div>
+                    `
+                };
+
+                await transporter.sendMail(mailOptions);
+                console.log(`📧 [Monitor Procedimentos] E-mail enviado p/ Andreia - ${pessoa} (Seq: ${nr_sequencia})`);
+
+                // Atualiza em memória
+                lastProcedimentoSequencia = nr_sequencia;
+                
+                // Grava no banco MySQL para persistência
+                try {
+                    await pool.query("UPDATE system_configs SET dados_extras = ? WHERE id_firebase = 'last_seq_procedimentos_eco'", [JSON.stringify({ lastSeq: lastProcedimentoSequencia })]);
+                } catch(e) { console.error("Erro ao salvar checkpoint no MySQL:", e); }
+            }
+        }
+    } catch (err) {
+        console.error("❌ [Monitor Procedimentos] Erro ao buscar novos procedimentos:", err.message);
+    } finally {
+        if (connection) {
+            try { await connection.close(); } catch (e) { console.error(e); }
+        }
+    }
+}
+
+// Inicia o monitoramento após 10 segundos para dar tempo do Oracle conectar
+setTimeout(() => {
+    monitorarNovosProcedimentos();
+    // Depois, repete a verificação a cada 3 minutos
+    setInterval(monitorarNovosProcedimentos, 3 * 60 * 1000);
+}, 10000);
 
 // ============================================================================
 // 🔄 ROTINA AUTOMÁTICA DE VIRADA DE MÊS (RANKING)
